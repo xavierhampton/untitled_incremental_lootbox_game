@@ -42,22 +42,10 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_chest_selector(frame: &mut Frame, app: &App, area: Rect) {
-    let mut spans = Vec::new();
-    for (i, ct) in ChestType::ALL.iter().enumerate() {
-        let unlocked = app.state.unlocked_chests.contains(ct);
-        let is_current = *ct == app.state.current_chest_type;
-        let label = format!("[{}]{}", i + 1, ct.name().chars().next().unwrap_or('?'));
-        let style = if is_current {
-            Style::default().fg(ct.color()).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-        } else if unlocked {
-            Style::default().fg(ct.color())
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        spans.push(Span::styled(label, style));
-        spans.push(Span::raw(" "));
-    }
-    let line = Line::from(spans);
+    let line = Line::from(Span::styled(
+        "Press [C] for chests",
+        Style::default().fg(Color::DarkGray),
+    ));
     frame.render_widget(Paragraph::new(line).alignment(Alignment::Center), area);
 }
 

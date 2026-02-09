@@ -127,7 +127,6 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         ("GP Mult", format!("{:.2}x", player.gp_multiplier), player.gp_multiplier, 5.0, Color::Yellow),
         ("XP Mult", format!("{:.2}x", player.xp_multiplier), player.xp_multiplier, 5.0, Color::Cyan),
         ("Crit", format!("{:.1}%", player.crit_chance * 100.0), player.crit_chance * 100.0, 75.0, Color::Red),
-        ("Auto Spd", format!("{:.1}", player.auto_speed), player.auto_speed, 5.0, Color::Magenta),
     ];
 
     for (label, value, current, max_val, color) in &player_stats {

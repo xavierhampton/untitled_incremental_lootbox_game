@@ -76,4 +76,10 @@ pub struct ItemInstance {
     pub gp_value: u64,
     pub xp_value: u64,
     pub is_crit: bool,
+    #[serde(default = "default_count")]
+    pub count: u32,
+}
+
+fn default_count() -> u32 {
+    1
 }

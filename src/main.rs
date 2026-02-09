@@ -38,7 +38,7 @@ fn main() -> Result<()> {
 
 fn run(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     let mut app = App::new();
-    let event_handler = EventHandler::new(33); // ~30 ticks/sec
+    let mut event_handler = EventHandler::new(33); // ~30 ticks/sec
 
     loop {
         terminal.draw(|frame| ui::draw(frame, &app))?;

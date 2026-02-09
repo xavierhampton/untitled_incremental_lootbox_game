@@ -126,7 +126,7 @@ pub fn all_upgrades() -> Vec<UpgradeDef> {
         UpgradeDef {
             id: "perpetual_gear",
             name: "Perpetual Gear",
-            description: "+10% auto-open speed per level",
+            description: "+10% open speed per level",
             max_level: 10,
             base_cost: 300,
             cost_scaling: 1.6,
@@ -153,7 +153,7 @@ pub fn all_upgrades() -> Vec<UpgradeDef> {
         UpgradeDef {
             id: "chrono_accelerator",
             name: "Chrono Accelerator",
-            description: "+12% auto-open speed per level",
+            description: "+12% open speed per level",
             max_level: 8,
             base_cost: 800,
             cost_scaling: 1.8,

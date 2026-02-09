@@ -303,45 +303,13 @@ pub fn all_skills() -> &'static [SkillDef] {
                 prerequisites: &["deep_knowledge", "midas_touch"],
                 cost: 5,
             },
-            // === Discovery Branch (10) ===
-            SkillDef {
-                id: "iron_key",
-                name: "Iron Key",
-                description: "Unlock Iron chests",
-                branch: SkillBranch::Discovery,
-                prerequisites: &[],
-                cost: 1,
-            },
-            SkillDef {
-                id: "silver_key",
-                name: "Silver Key",
-                description: "Unlock Silver chests",
-                branch: SkillBranch::Discovery,
-                prerequisites: &["iron_key"],
-                cost: 1,
-            },
-            SkillDef {
-                id: "gold_key",
-                name: "Gold Key",
-                description: "Unlock Gold chests",
-                branch: SkillBranch::Discovery,
-                prerequisites: &["silver_key"],
-                cost: 2,
-            },
-            SkillDef {
-                id: "void_attune",
-                name: "Void Attune",
-                description: "Unlock Crystal, Shadow, and Void chests",
-                branch: SkillBranch::Discovery,
-                prerequisites: &["gold_key"],
-                cost: 2,
-            },
+            // === Discovery Branch (6) ===
             SkillDef {
                 id: "scavenger",
                 name: "Scavenger",
                 description: "5% chance for a bonus Common item",
                 branch: SkillBranch::Discovery,
-                prerequisites: &["iron_key"],
+                prerequisites: &[],
                 cost: 1,
             },
             SkillDef {
@@ -366,7 +334,7 @@ pub fn all_skills() -> &'static [SkillDef] {
                 name: "Cartographer",
                 description: "Unlock chests 3 levels earlier",
                 branch: SkillBranch::Discovery,
-                prerequisites: &["void_attune"],
+                prerequisites: &["recycler"],
                 cost: 3,
             },
             SkillDef {

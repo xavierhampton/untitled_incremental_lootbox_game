@@ -260,7 +260,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        " [B] Buy skill  [R] Rebirth  [\u{2191}\u{2193}] Navigate",
+        " [E] Buy skill  [R] Rebirth  [\u{2191}\u{2193}] Navigate",
         Style::default().fg(Color::DarkGray),
     )));
 
