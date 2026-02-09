@@ -170,21 +170,28 @@ fn draw_player_status(frame: &mut Frame, app: &App, area: Rect) {
         .label("");
     frame.render_widget(xp_gauge, status_layout[1]);
 
-    // GP + Stats
-    let stats_line = Line::from(vec![
+    // GP + Stats + Rebirth info
+    let mut stats_spans = vec![
         Span::styled(
             format!("GP: {}", format_number(player.gp)),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw(format!(
-            "  Luck: {:.1}  Spd: {:.1}x  Crit: {:.0}%",
-            player.luck,
-            player.speed,
-            player.crit_chance * 100.0
-        )),
-    ]);
+    ];
+    if app.state.rebirth.rebirth_count > 0 || app.state.rebirth.essence > 0 {
+        stats_spans.push(Span::styled(
+            format!("  Ess: {}", app.state.rebirth.essence),
+            Style::default().fg(Color::Rgb(200, 150, 255)),
+        ));
+    }
+    stats_spans.push(Span::raw(format!(
+        "  Lk: {:.0}  Spd: {:.1}x  Crt: {:.0}%",
+        player.luck,
+        player.speed,
+        player.crit_chance * 100.0
+    )));
+    let stats_line = Line::from(stats_spans);
     frame.render_widget(Paragraph::new(stats_line), status_layout[2]);
 }
 

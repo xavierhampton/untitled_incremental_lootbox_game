@@ -15,7 +15,9 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         .split(area);
 
     let mut lines = Vec::new();
+    let mut selected_line: u16 = 0;
     let mut current_category: Option<UpgradeCategory> = None;
+    let tab_scroll = app.tab_scroll.min(upgrades.len().saturating_sub(1));
 
     for (i, upg) in upgrades.iter().enumerate() {
         // Category header
@@ -27,6 +29,8 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
                 UpgradeCategory::Speed => Color::Cyan,
                 UpgradeCategory::Luck => Color::Green,
                 UpgradeCategory::Wealth => Color::Yellow,
+                UpgradeCategory::Mastery => Color::Red,
+                UpgradeCategory::Discovery => Color::Rgb(100, 200, 100),
                 UpgradeCategory::Unlock => Color::Magenta,
             };
             let header = format!(" {} ", upg.category.label());
@@ -56,7 +60,10 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             format!("{} GP", upg.cost_at_level(level))
         };
 
-        let is_selected = i == app.tab_scroll;
+        let is_selected = i == tab_scroll;
+        if is_selected {
+            selected_line = lines.len() as u16;
+        }
         let can_afford = !maxed && app.state.player.gp >= upg.cost_at_level(level);
 
         let marker = if is_selected { "\u{25b6}" } else { " " };
@@ -127,7 +134,14 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(Color::DarkGray),
     )));
 
-    let paragraph = Paragraph::new(lines).scroll((0, 0));
+    let visible_height = sections[0].height;
+    let margin = 2u16;
+    let scroll_y = if selected_line + margin >= visible_height {
+        (selected_line + margin + 1).saturating_sub(visible_height)
+    } else {
+        0
+    };
+    let paragraph = Paragraph::new(lines).scroll((scroll_y, 0));
     frame.render_widget(paragraph, sections[0]);
 
     // GP bar at bottom

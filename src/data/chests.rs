@@ -108,6 +108,7 @@ pub fn loot_table_for(chest: ChestType) -> LootTable {
                 LootEntry { item_id: "crown_of_ages", weight: 4.0 },
                 LootEntry { item_id: "infinity_gem", weight: 3.0 },
                 LootEntry { item_id: "godslayer_blade", weight: 1.5 },
+                LootEntry { item_id: "tear_of_creation", weight: 0.3 },
             ],
         },
         ChestType::Void => LootTable {
@@ -120,6 +121,9 @@ pub fn loot_table_for(chest: ChestType) -> LootTable {
                 LootEntry { item_id: "crown_of_ages", weight: 8.0 },
                 LootEntry { item_id: "infinity_gem", weight: 7.0 },
                 LootEntry { item_id: "godslayer_blade", weight: 5.0 },
+                LootEntry { item_id: "tear_of_creation", weight: 1.0 },
+                LootEntry { item_id: "aeons_heart", weight: 0.7 },
+                LootEntry { item_id: "void_sovereign_crown", weight: 0.4 },
             ],
         },
     }

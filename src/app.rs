@@ -8,6 +8,7 @@ use crate::animation::fireworks::FireworkManager;
 use crate::animation::screen_flash::FlashManager;
 use crate::data::chests::loot_table_for;
 use crate::data::items::get_item;
+use crate::data::rebirth_skills::all_rebirth_skills;
 use crate::data::relics::{self, relic_stat_totals};
 use crate::data::skills::all_skills;
 use crate::data::upgrades::all_upgrades;
@@ -24,15 +25,17 @@ pub enum ActiveTab {
     Relics,
     Inventory,
     Stats,
+    Rebirth,
 }
 
 impl ActiveTab {
-    pub const ALL: [ActiveTab; 5] = [
+    pub const ALL: [ActiveTab; 6] = [
         ActiveTab::Skills,
         ActiveTab::Upgrades,
         ActiveTab::Relics,
         ActiveTab::Inventory,
         ActiveTab::Stats,
+        ActiveTab::Rebirth,
     ];
 
     pub fn label(self) -> &'static str {
@@ -42,6 +45,7 @@ impl ActiveTab {
             ActiveTab::Relics => "Relics",
             ActiveTab::Inventory => "Inventory",
             ActiveTab::Stats => "Stats",
+            ActiveTab::Rebirth => "Rebirth",
         }
     }
 }
@@ -64,6 +68,15 @@ pub struct App {
     pub chests_since_jackpot: u32,
     pub chests_since_xp_surge: u32,
     pub idle_income_ticks: u32,
+    // New skill counters
+    pub consecutive_chests: u32,      // momentum skill
+    pub empty_streak: u32,            // gambler_spirit skill
+    pub chaos_buff_ticks: u32,        // chaos_surge skill
+    pub chaos_buff_type: Option<u8>,  // 0=GP, 1=XP, 2=Speed
+    pub items_sold_count: u64,        // alchemy tracking
+    pub catalyst_stacks: f64,         // catalyst_brew (resets on rebirth)
+    pub rebirth_confirm: bool,        // R key double-press confirmation
+    pub rare_streak_count: u32,       // lucky_streak tracking
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,7 +113,7 @@ impl App {
                 .migrate_from_old_save(state.player.level, old_iron, old_silver, old_gold, old_auto);
         }
 
-        Self {
+        let mut app = Self {
             state,
             active_tab: ActiveTab::Skills,
             tab_scroll: 0,
@@ -117,7 +130,21 @@ impl App {
             chests_since_jackpot: 0,
             chests_since_xp_surge: 0,
             idle_income_ticks: 0,
-        }
+            consecutive_chests: 0,
+            empty_streak: 0,
+            chaos_buff_ticks: 0,
+            chaos_buff_type: None,
+            items_sold_count: 0,
+            catalyst_stacks: 0.0,
+            rebirth_confirm: false,
+            rare_streak_count: 0,
+        };
+
+        // Apply rebirth bonuses on load
+        app.apply_rebirth_bonuses();
+        app.recalculate_player_stats();
+
+        app
     }
 
     pub fn on_tick(&mut self) {
@@ -161,18 +188,33 @@ impl App {
             }
         }
 
-        // Idle Income: earn 1 GP per second (30 ticks) while chest is idle
+        // Idle Income: earn 2 GP per second while chest is idle
         if self.state.skill_tree.has_skill("idle_income")
             && self.state.chest_progress.state == ChestState::Idle
         {
             self.idle_income_ticks += 1;
-            if self.idle_income_ticks >= 30 {
+            let idle_rate = if self.state.skill_tree.has_skill("temporal_mastery") {
+                4 // 30 / 8 = earn 8x per second (every 4 ticks, gp = 2)
+            } else {
+                15 // 2 GP per second (every 15 ticks)
+            };
+            if self.idle_income_ticks >= idle_rate {
                 self.idle_income_ticks = 0;
-                self.state.player.gp += 1;
-                self.state.stats.total_gp_earned += 1;
+                let gp = 2;
+                self.state.player.gp += gp;
+                self.state.stats.total_gp_earned += gp;
+                self.state.rebirth.gp_earned_this_run += gp;
             }
         } else {
             self.idle_income_ticks = 0;
+        }
+
+        // Tick chaos buff
+        if self.chaos_buff_ticks > 0 {
+            self.chaos_buff_ticks -= 1;
+            if self.chaos_buff_ticks == 0 {
+                self.chaos_buff_type = None;
+            }
         }
 
         // Tick messages
@@ -219,23 +261,24 @@ impl App {
         }
 
         match key.code {
-            // Chest interaction
-            KeyCode::Char(' ') | KeyCode::Enter => match self.state.chest_progress.state {
+            // Chest interaction / Universal buy
+            KeyCode::Char(' ') => match self.state.chest_progress.state {
                 ChestState::Idle => self.start_opening(),
                 ChestState::Opening => {} // can't skip
                 ChestState::Revealing | ChestState::Complete => self.collect_and_reset(),
             },
 
             // Tab switching
-            KeyCode::Tab => {
+            KeyCode::Tab | KeyCode::Right => {
                 let idx = ActiveTab::ALL
                     .iter()
                     .position(|&t| t == self.active_tab)
                     .unwrap_or(0);
                 self.active_tab = ActiveTab::ALL[(idx + 1) % ActiveTab::ALL.len()];
                 self.tab_scroll = 0;
+                self.rebirth_confirm = false;
             }
-            KeyCode::BackTab => {
+            KeyCode::BackTab | KeyCode::Left => {
                 let idx = ActiveTab::ALL
                     .iter()
                     .position(|&t| t == self.active_tab)
@@ -243,6 +286,7 @@ impl App {
                 self.active_tab = ActiveTab::ALL
                     [(idx + ActiveTab::ALL.len() - 1) % ActiveTab::ALL.len()];
                 self.tab_scroll = 0;
+                self.rebirth_confirm = false;
             }
 
             // Chest type selection
@@ -262,15 +306,35 @@ impl App {
                 self.tab_scroll = self.tab_scroll.saturating_sub(1);
             }
             KeyCode::Down => {
-                self.tab_scroll += 1;
+                let max = match self.active_tab {
+                    ActiveTab::Skills => all_skills().len().saturating_sub(1),
+                    ActiveTab::Upgrades => all_upgrades().len().saturating_sub(1),
+                    ActiveTab::Relics => self.state.relics.owned.len().saturating_sub(1),
+                    ActiveTab::Inventory => self.state.inventory.items.len().saturating_sub(1),
+                    ActiveTab::Rebirth => all_rebirth_skills().len().saturating_sub(1),
+                    ActiveTab::Stats => 100, // stats just scrolls freely
+                };
+                if self.tab_scroll < max {
+                    self.tab_scroll += 1;
+                }
             }
 
-            // Buy upgrade / Learn skill
-            KeyCode::Char('b') | KeyCode::Char('B') => {
+            // Buy upgrade / Learn skill / Buy rebirth skill
+            KeyCode::Enter => {
+                // Enter on chest screen opens/collects
                 if self.active_tab == ActiveTab::Upgrades {
                     self.try_buy_upgrade();
                 } else if self.active_tab == ActiveTab::Skills {
                     self.try_learn_skill();
+                } else if self.active_tab == ActiveTab::Rebirth {
+                    self.try_learn_rebirth_skill();
+                } else {
+                    // In other tabs, Enter opens/collects chest
+                    match self.state.chest_progress.state {
+                        ChestState::Idle => self.start_opening(),
+                        ChestState::Opening => {} // can't skip
+                        ChestState::Revealing | ChestState::Complete => self.collect_and_reset(),
+                    }
                 }
             }
 
@@ -278,6 +342,20 @@ impl App {
             KeyCode::Char('e') | KeyCode::Char('E') => {
                 if self.active_tab == ActiveTab::Relics {
                     self.toggle_relic();
+                }
+            }
+
+            // Rebirth
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                if self.active_tab == ActiveTab::Rebirth {
+                    self.try_rebirth();
+                }
+            }
+
+            // Sell item (Alchemy)
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                if self.active_tab == ActiveTab::Inventory {
+                    self.try_sell_item();
                 }
             }
 
@@ -293,7 +371,7 @@ impl App {
         }
 
         // Determine effective speed for auto opener skill
-        let speed = if self.state.skill_tree.has_skill("auto_opener")
+        let mut speed = if self.state.skill_tree.has_skill("auto_opener")
             && self.state.player.auto_speed == 0.0
         {
             // Auto opener skill: 50% speed unless Perpetual Motion learned
@@ -306,6 +384,17 @@ impl App {
         } else {
             self.state.player.speed
         };
+
+        // Momentum skill: each consecutive chest opens 3% faster (max 60%)
+        if self.state.skill_tree.has_skill("momentum") {
+            let bonus = (self.consecutive_chests as f64 * 0.03).min(0.60);
+            speed *= 1.0 + bonus;
+        }
+
+        // Chaos buff: speed
+        if self.chaos_buff_type == Some(2) && self.chaos_buff_ticks > 0 {
+            speed *= 1.5;
+        }
 
         self.state
             .chest_progress
@@ -334,16 +423,59 @@ impl App {
 
         let mut item_rarity = item_def.rarity;
 
-        // Skill: Pity Timer - force Rare+ after 10 non-rare streak
-        if self.state.skill_tree.has_skill("pity_timer") && self.non_rare_streak >= 10 {
+        // Determine if pandemonium doubles chaos chances
+        let chaos_mult = if self.state.skill_tree.has_skill("pandemonium") {
+            2.0
+        } else {
+            1.0
+        };
+
+        // Skill: Wild Magic - 5% (or 10% with pandemonium) chance to upgrade rarity
+        if self.state.skill_tree.has_skill("wild_magic") {
+            let chance = 0.05 * chaos_mult;
+            if self.rng.random::<f64>() < chance {
+                item_rarity = match item_rarity {
+                    Rarity::Common => Rarity::Uncommon,
+                    Rarity::Uncommon => Rarity::Rare,
+                    Rarity::Rare => Rarity::Epic,
+                    Rarity::Epic => Rarity::Legendary,
+                    Rarity::Legendary => Rarity::Mythic,
+                    Rarity::Mythic => Rarity::Mythic,
+                };
+            }
+        }
+
+        // Skill: Gambler's Spirit - after 3 empty/common streaks, force Rare+
+        if self.state.skill_tree.has_skill("gambler_spirit") {
+            if matches!(item_rarity, Rarity::Common) {
+                self.empty_streak += 1;
+            } else {
+                self.empty_streak = 0;
+            }
+            let threshold = if self.state.skill_tree.has_skill("pandemonium") { 2 } else { 3 };
+            if self.empty_streak >= threshold {
+                if matches!(item_rarity, Rarity::Common | Rarity::Uncommon) {
+                    item_rarity = Rarity::Rare;
+                }
+                self.empty_streak = 0;
+            }
+        }
+
+        // Skill: Pity Timer - force Rare+ after streak
+        let pity_threshold = if self.state.skill_tree.has_skill("golden_rain") {
+            5
+        } else {
+            10
+        };
+        if self.state.skill_tree.has_skill("pity_timer") && self.non_rare_streak >= pity_threshold {
             if matches!(item_rarity, Rarity::Common | Rarity::Uncommon) {
                 item_rarity = Rarity::Rare;
             }
         }
 
-        // Skill: Jackpot - every 50th chest is Epic+
+        // Skill: Jackpot - every 40th chest is Epic+
         self.chests_since_jackpot += 1;
-        if self.state.skill_tree.has_skill("jackpot") && self.chests_since_jackpot >= 50 {
+        if self.state.skill_tree.has_skill("jackpot") && self.chests_since_jackpot >= 40 {
             self.chests_since_jackpot = 0;
             if matches!(
                 item_rarity,
@@ -360,24 +492,58 @@ impl App {
             self.non_rare_streak = 0;
         }
 
+        // Track lucky_streak (consecutive rare+ finds)
+        if matches!(item_rarity, Rarity::Rare | Rarity::Epic | Rarity::Legendary) {
+            self.rare_streak_count += 1;
+        } else {
+            self.rare_streak_count = 0;
+        }
+
         // XP Surge counter
         self.chests_since_xp_surge += 1;
+        // Momentum counter
+        self.consecutive_chests += 1;
 
         // Crit calculation
         let is_crit = self.rng.random::<f64>() < self.state.player.crit_chance;
 
-        // Skill: Overcharge - crit multiplier 3x instead of 2.5x
+        // Base crit multiplier from upgrades/skills
+        let crit_power_bonus = self.state.upgrades.get_level("crit_power") as f64 * 0.2;
+        let executioner_bonus = self.state.upgrades.get_level("executioners_edge") as f64 * 0.3;
+
+        // Skill: Overcharge - crit multiplier 3.5x instead of 2.5x
         let base_crit_mult = if self.state.skill_tree.has_skill("overcharge") {
-            3.0
+            3.5
         } else {
             2.5
+        } + crit_power_bonus + executioner_bonus;
+
+        // Skill: Grand Mastery capstone - crit mult +3x
+        let base_crit_mult = if self.state.skill_tree.has_skill("grand_mastery") {
+            base_crit_mult + 3.0
+        } else {
+            base_crit_mult
         };
 
-        let mut crit_mult = if is_crit { base_crit_mult } else { 1.0 };
+        // Relic crit mult bonus
+        let relic_totals = relic_stat_totals(&self.state.relics.equipped);
+        let base_crit_mult = base_crit_mult + relic_totals.crit_mult;
 
-        // Skill: Crit Cascade - 25% chance to trigger another crit (compound)
+        let mut crit_mult = if is_crit {
+            // Skill: Chaos Crit - random 1x-5x instead of fixed
+            if self.state.skill_tree.has_skill("chaos_crit") {
+                let random_mult = 1.0 + self.rng.random::<f64>() * 4.0;
+                random_mult + crit_power_bonus + executioner_bonus + relic_totals.crit_mult
+            } else {
+                base_crit_mult
+            }
+        } else {
+            1.0
+        };
+
+        // Skill: Crit Cascade - 30% chance to trigger another crit (compound)
         if is_crit && self.state.skill_tree.has_skill("crit_cascade") {
-            while self.rng.random::<f64>() < 0.25 {
+            while self.rng.random::<f64>() < 0.30 {
                 crit_mult *= base_crit_mult;
             }
         }
@@ -386,23 +552,62 @@ impl App {
             self.state.stats.crits_rolled += 1;
         }
 
-        // Skill: Midas Touch - +100% base GP on items
+        // Skill: Midas Touch - +150% base GP on items
         let gp_base = if self.state.skill_tree.has_skill("midas_touch") {
-            item_def.base_gp * 2
+            (item_def.base_gp as f64 * 2.5) as u64
         } else {
             item_def.base_gp
+        };
+
+        // Skill: Material Insight - +20% GP from Uncommon+ items
+        let material_bonus = if self.state.skill_tree.has_skill("material_insight")
+            && !matches!(item_rarity, Rarity::Common)
+        {
+            1.2
+        } else {
+            1.0
         };
 
         let mut gp_value = (gp_base as f64
             * item_rarity.gp_multiplier()
             * self.state.player.gp_multiplier
-            * crit_mult) as u64;
+            * crit_mult
+            * material_bonus) as u64;
 
-        // Skill: Legendary Aura - legendary items give 3x XP
+        // Skill: Fortune Favors - +10% GP
+        if self.state.skill_tree.has_skill("fortune_favors") {
+            gp_value = (gp_value as f64 * 1.10) as u64;
+        }
+
+        // Skill: Lucky Streak - consecutive rare+ finds give +15% GP each
+        if self.state.skill_tree.has_skill("lucky_streak") && self.rare_streak_count > 1 {
+            let bonus = 1.0 + (self.rare_streak_count - 1) as f64 * 0.15;
+            gp_value = (gp_value as f64 * bonus) as u64;
+        }
+
+        // Skill: Golden Rain capstone - +40% GP
+        if self.state.skill_tree.has_skill("golden_rain") {
+            gp_value = (gp_value as f64 * 1.40) as u64;
+        }
+
+        // Skill: Grand Mastery capstone - +40% all multipliers
+        if self.state.skill_tree.has_skill("grand_mastery") {
+            gp_value = (gp_value as f64 * 1.40) as u64;
+        }
+
+        // Upgrade: Legendary Focus - +10% legendary GP per level
+        if item_rarity == Rarity::Legendary {
+            let legendary_focus_lvl = self.state.upgrades.get_level("legendary_focus") as f64;
+            if legendary_focus_lvl > 0.0 {
+                gp_value = (gp_value as f64 * (1.0 + legendary_focus_lvl * 0.10)) as u64;
+            }
+        }
+
+        // Skill: Legendary Aura - legendary items give 4x XP
         let xp_rarity_mult = if item_rarity == Rarity::Legendary
             && self.state.skill_tree.has_skill("legendary_aura")
         {
-            item_rarity.xp_multiplier() * 3.0
+            item_rarity.xp_multiplier() * 4.0
         } else {
             item_rarity.xp_multiplier()
         };
@@ -412,28 +617,98 @@ impl App {
             * self.state.player.xp_multiplier
             * crit_mult) as u64;
 
-        // Skill: XP Surge - every 5th chest gives 5x XP
-        if self.state.skill_tree.has_skill("xp_surge") && self.chests_since_xp_surge >= 5 {
-            self.chests_since_xp_surge = 0;
-            xp_value *= 5;
+        // Skill: Deep Knowledge - +150% XP
+        if self.state.skill_tree.has_skill("deep_knowledge") {
+            xp_value = (xp_value as f64 * 2.5) as u64;
         }
 
-        // Skill: Double or Nothing - 20% double, 10% nothing
+        // Skill: Precision Strike - crits give +75% XP
+        if is_crit && self.state.skill_tree.has_skill("precision_strike") {
+            xp_value = (xp_value as f64 * 1.75) as u64;
+        }
+
+        // Skill: Grand Mastery capstone - +40% all multipliers (XP too)
+        if self.state.skill_tree.has_skill("grand_mastery") {
+            xp_value = (xp_value as f64 * 1.40) as u64;
+        }
+
+        // Skill: XP Surge - every 4th chest gives 6x XP
+        if self.state.skill_tree.has_skill("xp_surge") && self.chests_since_xp_surge >= 4 {
+            self.chests_since_xp_surge = 0;
+            xp_value *= 6;
+        }
+
+        // Skill: Entropy - loot values vary ±30%
+        if self.state.skill_tree.has_skill("entropy") {
+            let variance = 0.7 + self.rng.random::<f64>() * 0.6; // 0.7 to 1.3
+            gp_value = (gp_value as f64 * variance) as u64;
+            xp_value = (xp_value as f64 * variance) as u64;
+        }
+
+        // Skill: Double or Nothing - 25% double, 8% nothing
         if self.state.skill_tree.has_skill("double_or_nothing") {
             let don_roll = self.rng.random::<f64>();
-            if don_roll < 0.2 {
+            if don_roll < 0.25 {
                 gp_value *= 2;
                 xp_value *= 2;
-            } else if don_roll < 0.3 {
+            } else if don_roll < 0.33 {
                 gp_value = 0;
                 xp_value = 0;
             }
         }
 
-        // Skill: Golden Touch - 15% chance to double final GP
-        if self.state.skill_tree.has_skill("golden_touch") && self.rng.random::<f64>() < 0.15 {
+        // Skill: Golden Touch - 20% chance to double final GP
+        if self.state.skill_tree.has_skill("golden_touch") && self.rng.random::<f64>() < 0.20 {
             gp_value *= 2;
         }
+
+        // Skill: Reality Tear - 1% (2% with pandemonium) chance for 20x GP
+        if self.state.skill_tree.has_skill("reality_tear") {
+            let chance = 0.01 * chaos_mult;
+            if self.rng.random::<f64>() < chance {
+                gp_value *= 20;
+                self.add_message("REALITY TEAR! 20x GP!".to_string());
+                self.flashes.spawn(Color::Rgb(200, 50, 50), 15);
+            }
+        }
+
+        // Skill: Singularity capstone - 3% (6% pandemonium) chance to triple all
+        if self.state.skill_tree.has_skill("singularity") {
+            let chance = 0.03 * chaos_mult;
+            if self.rng.random::<f64>() < chance {
+                gp_value *= 3;
+                xp_value *= 3;
+                self.add_message("SINGULARITY! Triple loot!".to_string());
+                self.flashes.spawn(Color::Magenta, 12);
+            }
+        }
+
+        // Chaos Surge - random buff
+        if self.state.skill_tree.has_skill("chaos_surge") {
+            let buff_type = (self.rng.random::<f64>() * 3.0) as u8;
+            self.chaos_buff_type = Some(buff_type);
+            self.chaos_buff_ticks = 300; // 10 seconds at 30fps
+
+            match buff_type {
+                0 => gp_value = (gp_value as f64 * 1.5) as u64,
+                1 => xp_value = (xp_value as f64 * 1.5) as u64,
+                2 => {} // speed buff applied in start_opening
+                _ => {}
+            }
+        }
+
+        // Catalyst brew bonus
+        if self.state.skill_tree.has_skill("catalyst_brew") && self.catalyst_stacks > 0.0 {
+            gp_value = (gp_value as f64 * (1.0 + self.catalyst_stacks / 100.0)) as u64;
+        }
+
+        // Magnum Opus capstone - +50% GP
+        if self.state.skill_tree.has_skill("magnum_opus") {
+            gp_value = (gp_value as f64 * 1.5) as u64;
+        }
+
+        // Ensure at least 1 GP
+        gp_value = gp_value.max(1);
 
         let instance = ItemInstance {
             id: item_def.id.to_string(),
@@ -449,6 +724,7 @@ impl App {
         self.state.stats.items_found += 1;
         self.state.stats.total_gp_earned += gp_value;
         self.state.stats.total_xp_earned += xp_value;
+        self.state.rebirth.gp_earned_this_run += gp_value;
         if gp_value > self.state.stats.highest_single_gp {
             self.state.stats.highest_single_gp = gp_value;
         }
@@ -456,7 +732,13 @@ impl App {
             Rarity::Rare => self.state.stats.rares_found += 1,
             Rarity::Epic => self.state.stats.epics_found += 1,
             Rarity::Legendary => self.state.stats.legendaries_found += 1,
+            Rarity::Mythic => self.state.stats.mythics_found += 1,
             _ => {}
+        }
+
+        // Update highest level ever
+        if self.state.player.level > self.state.rebirth.highest_level_ever {
+            self.state.rebirth.highest_level_ever = self.state.player.level;
         }
 
         // Award GP and XP
@@ -469,6 +751,14 @@ impl App {
         // Skill: Recycler - auto-sell Common items for GP instead of adding to inventory
         let recycled = self.state.skill_tree.has_skill("recycler")
             && item_rarity == Rarity::Common;
+
+        // Deep Salvage: recycled items give 3x GP
+        if recycled && self.state.skill_tree.has_skill("deep_salvage") {
+            let bonus = gp_value * 2; // already got gp_value, give 2x more
+            self.state.player.gp += bonus;
+            self.state.stats.total_gp_earned += bonus;
+            self.state.rebirth.gp_earned_this_run += bonus;
+        }
 
         // Float texts: item name floats up, GP flies left, XP flies right
         // Item name — floats up
@@ -515,13 +805,38 @@ impl App {
             self.state.inventory.add(instance);
         }
 
-        // Skill: Multi-Drop - 10% chance for a second item
-        if self.state.skill_tree.has_skill("multi_drop") && self.rng.random::<f64>() < 0.10 {
+        // Relic: multi-drop bonus from relics
+        let relic_multi_drop = relic_totals.multi_drop;
+
+        // Upgrade: bonus_loot - +3% multi-drop per level
+        let bonus_loot_chance = self.state.upgrades.get_level("bonus_loot") as f64 * 0.03;
+
+        // Upgrade: lucky_find - +5% multi-drop per level
+        let lucky_find_chance = self.state.upgrades.get_level("lucky_find") as f64 * 0.05;
+
+        // Skill: Multi-Drop - 15% chance for a second item
+        let base_multi = if self.state.skill_tree.has_skill("multi_drop") { 0.15 } else { 0.0 };
+        let total_multi = base_multi + relic_multi_drop + bonus_loot_chance + lucky_find_chance;
+
+        // World Explorer capstone: +50% all drop rates
+        let total_multi = if self.state.skill_tree.has_skill("world_explorer") {
+            total_multi * 1.5
+        } else {
+            total_multi
+        };
+
+        if total_multi > 0.0 && self.rng.random::<f64>() < total_multi {
             self.roll_bonus_item();
         }
 
         // Skill: Scavenger - 5% chance for a bonus Common item
-        if self.state.skill_tree.has_skill("scavenger") && self.rng.random::<f64>() < 0.05 {
+        let scav_chance = if self.state.skill_tree.has_skill("scavenger") { 0.05 } else { 0.0 };
+        let scav_chance = if self.state.skill_tree.has_skill("world_explorer") {
+            scav_chance * 1.5
+        } else {
+            scav_chance
+        };
+        if scav_chance > 0.0 && self.rng.random::<f64>() < scav_chance {
             self.roll_scavenger_item();
         }
     }
@@ -554,6 +869,7 @@ impl App {
             self.state.player.gp += gp_value;
             self.state.stats.total_gp_earned += gp_value;
             self.state.stats.items_found += 1;
+            self.state.rebirth.gp_earned_this_run += gp_value;
             self.award_xp(xp_value);
 
             let instance = ItemInstance {
@@ -587,6 +903,7 @@ impl App {
                     self.state.player.gp += gp_value;
                     self.state.stats.total_gp_earned += gp_value;
                     self.state.stats.items_found += 1;
+                    self.state.rebirth.gp_earned_this_run += gp_value;
                     self.award_xp(xp_value);
 
                     let instance = ItemInstance {
@@ -652,6 +969,14 @@ impl App {
                 );
                 self.flashes.spawn(Color::Yellow, 10);
             }
+            Rarity::Mythic => {
+                self.fireworks.spawn_burst_wide(
+                    cx, cy, spread_x * 2.0, spread_y * 2.0,
+                    &[Color::Rgb(255, 50, 50), Color::Rgb(255, 100, 100), Color::White, Color::Rgb(255, 0, 0), Color::Rgb(200, 0, 0), Color::Rgb(255, 150, 150)],
+                    50, 90, 15,
+                );
+                self.flashes.spawn(Color::Rgb(255, 50, 50), 15);
+            }
         }
     }
 
@@ -667,6 +992,10 @@ impl App {
                 "LEVEL UP! Level {} (+1 Skill Point)",
                 self.state.player.level
             ));
+            // Update highest level
+            if self.state.player.level > self.state.rebirth.highest_level_ever {
+                self.state.rebirth.highest_level_ever = self.state.player.level;
+            }
             self.check_chest_unlocks();
         }
     }
@@ -674,18 +1003,20 @@ impl App {
     fn check_chest_unlocks(&mut self) {
         for ct in ChestType::ALL {
             if !self.state.unlocked_chests.contains(&ct) {
-                let unlocked = match ct {
+                let level_req = ct.required_level();
+                let meets_level = self.state.player.level >= level_req;
+
+                let has_key = match ct {
                     ChestType::Wooden => true,
-                    // Skill tree keys
-                    ChestType::Iron => self.state.skill_tree.has_skill("iron_key"),
-                    ChestType::Silver => self.state.skill_tree.has_skill("silver_key"),
-                    ChestType::Gold => self.state.skill_tree.has_skill("gold_key"),
-                    // Crystal/Shadow/Void require Void Attune skill
-                    ChestType::Crystal | ChestType::Shadow | ChestType::Void => {
-                        self.state.skill_tree.has_skill("void_attune")
-                    }
+                    ChestType::Iron => self.state.upgrades.get_level("iron_key") > 0 || self.state.skill_tree.has_skill("iron_key"),
+                    ChestType::Silver => self.state.upgrades.get_level("silver_key") > 0 || self.state.skill_tree.has_skill("silver_key"),
+                    ChestType::Gold => self.state.upgrades.get_level("gold_key") > 0 || self.state.skill_tree.has_skill("gold_key"),
+                    ChestType::Crystal => self.state.upgrades.get_level("crystal_key") > 0 || self.state.skill_tree.has_skill("void_attune"),
+                    ChestType::Shadow => self.state.upgrades.get_level("shadow_key") > 0 || self.state.skill_tree.has_skill("void_attune"),
+                    ChestType::Void => self.state.upgrades.get_level("void_key") > 0 || self.state.skill_tree.has_skill("void_attune"),
                 };
-                if unlocked {
+
+                if meets_level && has_key {
                     self.state.unlocked_chests.push(ct);
                     self.add_message(format!("{} chests unlocked!", ct.name()));
                 }
@@ -694,24 +1025,51 @@ impl App {
     }
 
     fn try_relic_drop(&mut self, item_rarity: Rarity) {
-        // Relics only drop from rarer items in higher chests
+        // Relics drop from higher chests; Uncommon relics from Silver+, Rare from Gold+, etc.
         let chest_tier = self.state.current_chest_type.index();
-        if chest_tier < 3 {
-            return; // Gold+ only
-        }
 
+        // Uncommon relics can drop from Silver+ (tier 2+) on any item rarity
+        // Rare+ relics from Gold+ (tier 3+) on Epic/Legendary items
         let base_drop_chance = match item_rarity {
-            Rarity::Epic => 0.08,
-            Rarity::Legendary => 0.20,
+            Rarity::Uncommon if chest_tier >= 2 => 0.05,
+            Rarity::Rare if chest_tier >= 2 => 0.08,
+            Rarity::Epic if chest_tier >= 3 => 0.08,
+            Rarity::Legendary if chest_tier >= 3 => 0.20,
             _ => return,
         };
 
         // Skill: Relic Hunter - double relic drop chance
-        let drop_chance = if self.state.skill_tree.has_skill("relic_hunter") {
+        let mut drop_chance = if self.state.skill_tree.has_skill("relic_hunter") {
             base_drop_chance * 2.0
         } else {
             base_drop_chance
         };
+
+        // Deep Salvage: +10% relic drop
+        if self.state.skill_tree.has_skill("deep_salvage") {
+            drop_chance += 0.10;
+        }
+
+        // Relic: relic_drop_pct bonus
+        let relic_totals = relic_stat_totals(&self.state.relics.equipped);
+        drop_chance *= 1.0 + relic_totals.relic_drop_pct / 100.0;
+
+        // Upgrade: relic_magnet - +5% per level
+        let magnet_lvl = self.state.upgrades.get_level("relic_magnet") as f64;
+        drop_chance += magnet_lvl * 0.05;
+
+        // Upgrade: treasure_hunter - +8% per level
+        let hunter_lvl = self.state.upgrades.get_level("treasure_hunter") as f64;
+        drop_chance += hunter_lvl * 0.08;
+
+        // Upgrade: artifact_sense - +10% per level
+        let artifact_lvl = self.state.upgrades.get_level("artifact_sense") as f64;
+        drop_chance += artifact_lvl * 0.10;
+
+        // World Explorer capstone: +50% all drop rates
+        if self.state.skill_tree.has_skill("world_explorer") {
+            drop_chance *= 1.5;
+        }
 
         if self.rng.random::<f64>() < drop_chance {
             // Pick a relic we don't own yet
@@ -774,6 +1132,24 @@ impl App {
             self.add_message("Already maxed!".to_string());
             return;
         }
+
+        // Check level requirement for key upgrades
+        if upg.category == crate::data::upgrades::UpgradeCategory::Unlock {
+            let req_level = match upg.id {
+                "iron_key" => 5,
+                "silver_key" => 10,
+                "gold_key" => 20,
+                "crystal_key" => 30,
+                "shadow_key" => 40,
+                "void_key" => 50,
+                _ => 1,
+            };
+            if self.state.player.level < req_level {
+                self.add_message(format!("Need level {}!", req_level));
+                return;
+            }
+        }
+
         let cost = upg.cost_at_level(current_level);
         if self.state.player.gp < cost {
             self.add_message(format!("Need {} GP!", cost));
@@ -796,8 +1172,288 @@ impl App {
             return;
         }
         let id = owned[self.tab_scroll].clone();
-        self.state.relics.toggle_equip(&id);
+
+        // Dynamic max equipped based on upgrades and rebirth skills
+        let extra_slots = self.state.upgrades.get_level("deep_pockets") as usize;
+        let rebirth_slot = if self.state.rebirth.has_rebirth_skill("rb_relic_slot") { 1 } else { 0 };
+        let world_explorer_slot = if self.state.skill_tree.has_skill("world_explorer") { 1 } else { 0 };
+        let max_equipped = 5 + extra_slots + rebirth_slot + world_explorer_slot;
+
+        if self.state.relics.is_equipped(&id) {
+            self.state.relics.unequip(&id);
+        } else if self.state.relics.equipped.len() < max_equipped {
+            if self.state.relics.owns(&id) && !self.state.relics.is_equipped(&id) {
+                self.state.relics.equipped.push(id);
+            }
+        } else {
+            self.add_message("All relic slots full!".to_string());
+            return;
+        }
         self.recalculate_player_stats();
+    }
+
+    fn try_learn_rebirth_skill(&mut self) {
+        let skills = all_rebirth_skills();
+        if self.tab_scroll >= skills.len() {
+            return;
+        }
+        let skill = &skills[self.tab_scroll];
+        if self.state.rebirth.has_rebirth_skill(skill.id) {
+            self.add_message("Already learned!".to_string());
+        } else if self.state.rebirth.learn_rebirth_skill(skill.id) {
+            self.add_message(format!("Learned rebirth skill: {}!", skill.name));
+            self.apply_rebirth_bonuses();
+            self.recalculate_player_stats();
+        } else if self.state.rebirth.essence < skill.essence_cost {
+            self.add_message(format!("Need {} Essence!", skill.essence_cost));
+        } else {
+            self.add_message("Prerequisites not met!".to_string());
+        }
+    }
+
+    fn try_rebirth(&mut self) {
+        let level = self.state.player.level;
+        if !self.state.rebirth.can_rebirth(level) {
+            self.add_message(format!(
+                "Need level {} to rebirth! (currently {})",
+                self.state.rebirth.min_level_for_rebirth(),
+                level
+            ));
+            self.rebirth_confirm = false;
+            return;
+        }
+
+        if !self.rebirth_confirm {
+            self.rebirth_confirm = true;
+            let essence = self.state.rebirth.calculate_essence_reward(
+                level,
+                self.state.rebirth.gp_earned_this_run,
+            );
+            self.add_message(format!(
+                "Press [R] again to rebirth for {} Essence!",
+                essence
+            ));
+            return;
+        }
+
+        // Perform rebirth
+        self.perform_rebirth();
+        self.rebirth_confirm = false;
+    }
+
+    fn perform_rebirth(&mut self) {
+        let level = self.state.player.level;
+        let gp_this_run = self.state.rebirth.gp_earned_this_run;
+
+        // Calculate essence reward
+        let essence = self.state.rebirth.calculate_essence_reward(level, gp_this_run);
+
+        // Award essence
+        self.state.rebirth.essence += essence;
+        self.state.rebirth.total_essence_earned += essence;
+        self.state.rebirth.rebirth_count += 1;
+
+        // Update highest level
+        if level > self.state.rebirth.highest_level_ever {
+            self.state.rebirth.highest_level_ever = level;
+        }
+
+        // Reset run-specific state
+        self.state.rebirth.gp_earned_this_run = 0;
+
+        // Reset player to defaults
+        self.state.player = crate::game::player::Player::default();
+
+        // Reset inventory, upgrades, skills, chests, chest progress
+        self.state.inventory = crate::game::inventory::Inventory::default();
+        self.state.upgrades = crate::game::upgrade::UpgradeState::default();
+        self.state.skill_tree = crate::game::skill_tree::SkillTreeState::default();
+        self.state.chest_progress = crate::game::chest::ChestProgress::default();
+        self.state.current_chest_type = ChestType::Wooden;
+        self.state.unlocked_chests = vec![ChestType::Wooden];
+
+        // Reset app counters
+        self.non_rare_streak = 0;
+        self.chests_since_jackpot = 0;
+        self.chests_since_xp_surge = 0;
+        self.idle_income_ticks = 0;
+        self.consecutive_chests = 0;
+        self.empty_streak = 0;
+        self.chaos_buff_ticks = 0;
+        self.chaos_buff_type = None;
+        self.items_sold_count = 0;
+        self.catalyst_stacks = 0.0;
+        self.rare_streak_count = 0;
+        self.tab_scroll = 0;
+
+        // Apply rebirth bonuses
+        self.apply_rebirth_bonuses();
+        self.recalculate_player_stats();
+        self.check_chest_unlocks();
+
+        // Flash + message
+        self.flashes.spawn(Color::Rgb(150, 100, 255), 20);
+        self.add_message(format!(
+            "REBIRTH #{} complete! +{} Essence",
+            self.state.rebirth.rebirth_count, essence
+        ));
+
+        // Save immediately
+        self.save_game();
+    }
+
+    fn apply_rebirth_bonuses(&mut self) {
+        let rb = &self.state.rebirth;
+
+        // Tier 1
+        if rb.has_rebirth_skill("rb_lucky_start") {
+            self.state.player.base_luck += 5.0;
+        }
+        if rb.has_rebirth_skill("rb_swift_start") {
+            self.state.player.base_speed += 0.3;
+        }
+        if rb.has_rebirth_skill("rb_gp_boost") {
+            self.state.player.base_gp_multiplier += 0.10;
+        }
+        if rb.has_rebirth_skill("rb_xp_boost") {
+            self.state.player.base_xp_multiplier += 0.10;
+        }
+        if rb.has_rebirth_skill("rb_crit_boost") {
+            self.state.player.base_crit_chance += 0.03;
+        }
+        if rb.has_rebirth_skill("rb_head_start") && self.state.player.level < 3 {
+            self.state.player.level = 3;
+            self.state.player.xp_to_next = xp_for_level(3);
+            self.state.skill_tree.skill_points += 2; // levels 2 and 3
+        }
+        if rb.has_rebirth_skill("rb_starting_gp") {
+            self.state.player.gp += 500;
+        }
+
+        // Tier 2
+        if rb.has_rebirth_skill("rb_luck_mastery") {
+            self.state.player.base_luck += 10.0;
+        }
+        if rb.has_rebirth_skill("rb_speed_mastery") {
+            self.state.player.base_speed += 0.5;
+        }
+        if rb.has_rebirth_skill("rb_gp_mastery") {
+            self.state.player.base_gp_multiplier += 0.25;
+        }
+        if rb.has_rebirth_skill("rb_xp_mastery") {
+            self.state.player.base_xp_multiplier += 0.25;
+        }
+        if rb.has_rebirth_skill("rb_crit_mastery") {
+            self.state.player.base_crit_chance += 0.05;
+        }
+        // rb_relic_slot - handled in toggle_relic max_equipped calculation
+        if rb.has_rebirth_skill("rb_chest_unlock") {
+            // Start with Iron and Silver unlocked
+            if !self.state.unlocked_chests.contains(&ChestType::Iron) {
+                self.state.unlocked_chests.push(ChestType::Iron);
+            }
+            if !self.state.unlocked_chests.contains(&ChestType::Silver) {
+                self.state.unlocked_chests.push(ChestType::Silver);
+            }
+        }
+        // rb_essence_boost - handled in calculate_essence_reward
+
+        // Tier 3
+        if rb.has_rebirth_skill("rb_all_luck") {
+            self.state.player.base_luck += 20.0;
+            self.state.player.base_gp_multiplier += 0.10;
+        }
+        if rb.has_rebirth_skill("rb_all_speed") {
+            self.state.player.base_speed += 1.0;
+            // auto opener at start is implicitly handled - player gets speed which makes auto_opener work
+        }
+        if rb.has_rebirth_skill("rb_all_wealth") {
+            self.state.player.base_gp_multiplier += 0.50;
+            self.state.player.base_xp_multiplier += 0.50;
+        }
+        if rb.has_rebirth_skill("rb_all_crit") {
+            self.state.player.base_crit_chance += 0.10;
+        }
+        if rb.has_rebirth_skill("rb_ascension") {
+            // All base stats +50%
+            self.state.player.base_luck *= 1.5;
+            self.state.player.base_speed *= 1.5;
+            self.state.player.base_gp_multiplier *= 1.5;
+            self.state.player.base_xp_multiplier *= 1.5;
+            self.state.player.base_crit_chance = (self.state.player.base_crit_chance * 1.5).min(0.75);
+            // Start with Gold chests
+            if !self.state.unlocked_chests.contains(&ChestType::Gold) {
+                self.state.unlocked_chests.push(ChestType::Gold);
+            }
+        }
+    }
+
+    fn try_sell_item(&mut self) {
+        if !self.state.skill_tree.has_skill("transmute_basics") {
+            self.add_message("Learn Transmute Basics to sell items!".to_string());
+            return;
+        }
+
+        let items = &self.state.inventory.items;
+        if self.tab_scroll >= items.len() {
+            return;
+        }
+
+        let item = items[self.tab_scroll].clone();
+
+        // Calculate sell value
+        let mut sell_pct = if self.state.skill_tree.has_skill("philosophers_stone") {
+            if matches!(item.rarity, Rarity::Rare | Rarity::Epic | Rarity::Legendary) {
+                1.5
+            } else {
+                1.0
+            }
+        } else if self.state.skill_tree.has_skill("gold_synthesis") {
+            0.75
+        } else {
+            0.50
+        };
+
+        // Magnum Opus doubles sell bonuses
+        if self.state.skill_tree.has_skill("magnum_opus") {
+            sell_pct *= 2.0;
+        }
+
+        let mut sell_gp = (item.gp_value as f64 * sell_pct) as u64;
+
+        // Elixir of Fortune: 10% chance to double sell GP
+        if self.state.skill_tree.has_skill("elixir_of_fortune") {
+            if self.rng.random::<f64>() < 0.10 {
+                sell_gp *= 2;
+                self.add_message("Elixir of Fortune: double sell!".to_string());
+            }
+        }
+
+        sell_gp = sell_gp.max(1);
+
+        self.state.player.gp += sell_gp;
+        self.state.stats.total_gp_earned += sell_gp;
+        self.state.rebirth.gp_earned_this_run += sell_gp;
+        self.items_sold_count += 1;
+
+        // Catalyst Brew: +1% GP per sell stack
+        if self.state.skill_tree.has_skill("catalyst_brew") {
+            self.catalyst_stacks += 1.0;
+        }
+
+        // Essence Distill: selling grants +10% XP of GP value
+        if self.state.skill_tree.has_skill("essence_distill") {
+            let xp_bonus = (sell_gp as f64 * 0.10) as u64;
+            self.award_xp(xp_bonus);
+        }
+
+        self.add_message(format!("Sold {} for {} GP", item.name, sell_gp));
+        self.state.inventory.items.remove(self.tab_scroll);
+
+        // Adjust scroll if needed
+        if self.tab_scroll > 0 && self.tab_scroll >= self.state.inventory.items.len() {
+            self.tab_scroll = self.state.inventory.items.len().saturating_sub(1);
+        }
     }
 
     pub fn recalculate_player_stats(&mut self) {
@@ -821,6 +1477,42 @@ impl App {
                 "gold_touch" => up_gp += lvl * 0.10,
                 "xp_boost" => up_xp += lvl * 0.10,
                 "treasure_sense" => up_gp += lvl * 0.20,
+                // Speed category
+                "overdrive" => up_speed += lvl * 0.15,
+                "perpetual_gear" => up_auto += lvl * 0.10,
+                "quicksilver_touch" => up_speed += lvl * 0.08,
+                "haste_rune" => up_speed += lvl * 0.20,
+                "chrono_accelerator" => up_auto += lvl * 0.12,
+                // Luck category
+                "fortune_wheel" => up_luck += lvl * 3.0,
+                "horseshoe" => {} // Handled in rarity upgrade logic
+                "rabbits_paw" => up_luck += lvl * 4.0,
+                "lucky_dice" => up_crit += lvl * 0.03,
+                "stars_alignment" => up_luck += lvl * 5.0,
+                // Wealth category
+                "golden_magnet" => up_gp += lvl * 0.15,
+                "wisdom_tome" => up_xp += lvl * 0.15,
+                "alchemist_stone" => up_gp += lvl * 0.25,
+                "scholars_cap" => up_xp += lvl * 0.25,
+                "dragon_hoard_map" => up_gp += lvl * 0.30,
+                // Mastery category
+                "keen_edge" => up_crit += lvl * 0.03,
+                "crit_power" => {} // Handled in roll_loot crit calculation
+                "combo_counter" => {} // Handled in roll_loot
+                "xp_amplifier" => up_xp += lvl * 0.20,
+                "legendary_focus" => {} // Handled in roll_loot
+                "executioners_edge" => {} // Handled in roll_loot crit calculation
+                "precision_mastery" => up_crit += lvl * 0.04,
+                "knowledge_nexus" => up_xp += lvl * 0.30,
+                // Discovery category
+                "relic_magnet" => {} // Handled in try_relic_drop
+                "deep_pockets" => {} // Handled in toggle_relic
+                "bonus_loot" => {} // Handled in roll_loot
+                "chest_radar" => {} // Handled in roll_loot
+                "void_sight" => {} // Handled in loot table weighting
+                "treasure_hunter" => {} // Handled in try_relic_drop
+                "lucky_find" => {} // Handled in roll_loot
+                "artifact_sense" => {} // Handled in try_relic_drop
                 _ => {}
             }
         }
@@ -840,19 +1532,44 @@ impl App {
             up_speed += 0.30;
         }
         if tree.has_skill("nimble_fingers") {
-            up_speed += 0.20;
+            up_speed += 0.25;
         }
         if tree.has_skill("critical_eye") {
             up_crit += 0.05;
         }
 
-        let (r_luck, r_speed, r_gp, r_xp, r_crit) =
-            relic_stat_totals(&self.state.relics.equipped);
+        // New skill stat bonuses
+        if tree.has_skill("fortune_favors") {
+            up_luck += 12.0;
+        }
+        if tree.has_skill("time_warp") {
+            up_speed += 0.50;
+            up_auto += 0.15;
+        }
+        if tree.has_skill("temporal_mastery") {
+            up_speed += 0.75;
+        }
+        if tree.has_skill("precision_strike") {
+            up_crit += 0.12;
+        }
+        if tree.has_skill("elixir_of_fortune") {
+            up_luck += 5.0;
+        }
+
+        let relic_totals = relic_stat_totals(&self.state.relics.equipped);
 
         self.state.player.recalculate_stats(
-            up_luck, up_speed, up_gp, up_xp, up_crit, up_auto, r_luck, r_speed, r_gp, r_xp,
-            r_crit,
+            up_luck, up_speed, up_gp, up_xp, up_crit, up_auto,
+            relic_totals.luck, relic_totals.speed_pct, relic_totals.gp_pct,
+            relic_totals.xp_pct, relic_totals.crit,
         );
+    }
+
+    pub fn max_equipped_relics(&self) -> usize {
+        let extra_slots = self.state.upgrades.get_level("deep_pockets") as usize;
+        let rebirth_slot = if self.state.rebirth.has_rebirth_skill("rb_relic_slot") { 1 } else { 0 };
+        let world_explorer_slot = if self.state.skill_tree.has_skill("world_explorer") { 1 } else { 0 };
+        5 + extra_slots + rebirth_slot + world_explorer_slot
     }
 
     fn add_message(&mut self, msg: String) {

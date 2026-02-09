@@ -33,6 +33,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         ("Items Found", format_num(stats.items_found), Color::White),
         ("Total GP Earned", format_num(stats.total_gp_earned), Color::Yellow),
         ("Total XP Earned", format_num(stats.total_xp_earned), Color::Cyan),
+        ("Mythics", format_num(stats.mythics_found), Color::Rgb(255, 50, 50)),
         ("Legendaries", format_num(stats.legendaries_found), Color::Yellow),
         ("Epics", format_num(stats.epics_found), Color::Magenta),
         ("Rares", format_num(stats.rares_found), Color::Blue),
@@ -53,6 +54,50 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
                     .add_modifier(Modifier::BOLD),
             ),
         ]));
+    }
+
+    // Rebirth info
+    if app.state.rebirth.rebirth_count > 0 || app.state.rebirth.total_essence_earned > 0 {
+        lines.push(Line::from(""));
+        lines.push(Line::from(vec![
+            Span::styled(
+                " \u{2500}\u{2500} ",
+                Style::default().fg(Color::Rgb(150, 100, 255)),
+            ),
+            Span::styled(
+                "Rebirth",
+                Style::default()
+                    .fg(Color::Rgb(150, 100, 255))
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                " \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+                Style::default().fg(Color::Rgb(150, 100, 255)),
+            ),
+        ]));
+        lines.push(Line::from(""));
+
+        let rebirth_entries = [
+            ("Rebirth Count", format_num(app.state.rebirth.rebirth_count as u64), Color::Rgb(150, 100, 255)),
+            ("Total Essence", format_num(app.state.rebirth.total_essence_earned), Color::Rgb(200, 150, 255)),
+            ("Highest Level", format_num(app.state.rebirth.highest_level_ever as u64), Color::Cyan),
+            ("Rebirth Skills", format_num(app.state.rebirth.rebirth_skills.len() as u64), Color::Green),
+        ];
+
+        for (label, value, value_color) in &rebirth_entries {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  {:<20}", label),
+                    Style::default().fg(Color::Gray),
+                ),
+                Span::styled(
+                    value.clone(),
+                    Style::default()
+                        .fg(*value_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
     }
 
     lines.push(Line::from(""));

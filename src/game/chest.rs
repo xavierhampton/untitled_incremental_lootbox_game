@@ -63,12 +63,12 @@ impl ChestType {
     pub fn required_level(self) -> u32 {
         match self {
             ChestType::Wooden => 1,
-            ChestType::Iron => 3,
-            ChestType::Silver => 6,
-            ChestType::Gold => 10,
-            ChestType::Crystal => 15,
-            ChestType::Shadow => 22,
-            ChestType::Void => 30,
+            ChestType::Iron => 5,
+            ChestType::Silver => 10,
+            ChestType::Gold => 20,
+            ChestType::Crystal => 30,
+            ChestType::Shadow => 40,
+            ChestType::Void => 50,
         }
     }
 

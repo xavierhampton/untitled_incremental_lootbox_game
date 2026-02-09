@@ -54,6 +54,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let mut lines = Vec::new();
 
     let rarities = [
+        Rarity::Mythic,
         Rarity::Legendary,
         Rarity::Epic,
         Rarity::Rare,
@@ -151,6 +152,7 @@ fn draw_rarity_bar(frame: &mut Frame, app: &App, area: Rect) {
         Rarity::Rare,
         Rarity::Epic,
         Rarity::Legendary,
+        Rarity::Mythic,
     ];
 
     let bar_width = area.width.saturating_sub(2) as f64;

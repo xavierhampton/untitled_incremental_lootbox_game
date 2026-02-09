@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::chest::{ChestProgress, ChestType};
 use super::inventory::Inventory;
 use super::player::Player;
+use super::rebirth::RebirthState;
 use super::relic::RelicState;
 use super::skill_tree::SkillTreeState;
 use super::upgrade::UpgradeState;
@@ -16,6 +17,8 @@ pub struct LifetimeStats {
     pub legendaries_found: u64,
     pub epics_found: u64,
     pub rares_found: u64,
+    #[serde(default)]
+    pub mythics_found: u64,
     pub crits_rolled: u64,
     pub highest_single_gp: u64,
 }
@@ -30,6 +33,7 @@ impl Default for LifetimeStats {
             legendaries_found: 0,
             epics_found: 0,
             rares_found: 0,
+            mythics_found: 0,
             crits_rolled: 0,
             highest_single_gp: 0,
         }
@@ -44,6 +48,8 @@ pub struct GameState {
     pub relics: RelicState,
     #[serde(default)]
     pub skill_tree: SkillTreeState,
+    #[serde(default)]
+    pub rebirth: RebirthState,
     pub chest_progress: ChestProgress,
     pub current_chest_type: ChestType,
     pub stats: LifetimeStats,
@@ -58,6 +64,7 @@ impl Default for GameState {
             upgrades: UpgradeState::default(),
             relics: RelicState::default(),
             skill_tree: SkillTreeState::default(),
+            rebirth: RebirthState::default(),
             chest_progress: ChestProgress::default(),
             current_chest_type: ChestType::Wooden,
             stats: LifetimeStats::default(),

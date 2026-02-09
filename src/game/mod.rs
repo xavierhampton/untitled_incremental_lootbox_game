@@ -3,6 +3,7 @@ pub mod inventory;
 pub mod item;
 pub mod player;
 pub mod progression;
+pub mod rebirth;
 pub mod relic;
 pub mod save;
 pub mod skill_tree;

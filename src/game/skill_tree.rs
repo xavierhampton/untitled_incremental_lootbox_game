@@ -18,10 +18,12 @@ impl SkillTreeState {
         if self.has_skill(id) {
             return false;
         }
-        if self.skill_points == 0 {
-            return false;
-        }
         if let Some(skill) = get_skill(id) {
+            // Check if we have enough skill points for the cost
+            if self.skill_points < skill.cost {
+                return false;
+            }
+            // Check prerequisites
             skill
                 .prerequisites
                 .iter()
@@ -35,9 +37,13 @@ impl SkillTreeState {
         if !self.can_learn(id) {
             return false;
         }
-        self.learned.insert(id.to_string());
-        self.skill_points -= 1;
-        true
+        if let Some(skill) = get_skill(id) {
+            self.learned.insert(id.to_string());
+            self.skill_points = self.skill_points.saturating_sub(skill.cost);
+            true
+        } else {
+            false
+        }
     }
 
     pub fn total_learned(&self) -> u32 {

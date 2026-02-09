@@ -42,6 +42,11 @@ pub fn all_items() -> Vec<ItemDef> {
         ItemDef { id: "crown_of_ages", name: "Crown of Ages", rarity: Rarity::Legendary, base_gp: 1000, base_xp: 500, description: "Worn by forgotten kings." },
         ItemDef { id: "infinity_gem", name: "Infinity Gem", rarity: Rarity::Legendary, base_gp: 1200, base_xp: 600, description: "Contains a universe." },
         ItemDef { id: "godslayer_blade", name: "Godslayer Blade", rarity: Rarity::Legendary, base_gp: 1500, base_xp: 750, description: "The edge between worlds." },
+
+        // === Mythic (3) ===
+        ItemDef { id: "tear_of_creation", name: "Tear of Creation", rarity: Rarity::Mythic, base_gp: 5000, base_xp: 2500, description: "A droplet from the birth of reality." },
+        ItemDef { id: "aeons_heart", name: "Aeon's Heart", rarity: Rarity::Mythic, base_gp: 6000, base_xp: 3000, description: "Pulses with the rhythm of time itself." },
+        ItemDef { id: "void_sovereign_crown", name: "Void Sovereign's Crown", rarity: Rarity::Mythic, base_gp: 7500, base_xp: 3750, description: "Dominion over nothingness." },
     ]
 }
 

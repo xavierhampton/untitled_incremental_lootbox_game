@@ -28,7 +28,7 @@ pub fn draw_layout(frame: &mut Frame, app: &App) {
     tab_panel::draw(frame, app, columns[1]);
 
     // Footer with controls
-    let footer_text = " [Space] Open  [Tab] Switch  [1-7] Chest  [B] Buy/Learn  [E] Equip  [?] Help  [Q] Quit";
+    let footer_text = " [Space] Open  [\u{2190}/\u{2192}] Tabs  [1-7] Chest  [Enter] Buy/Learn  [E] Equip  [S] Sell  [R] Rebirth  [?] Help  [Q] Quit";
     let footer = Paragraph::new(footer_text)
         .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(footer, outer[1]);
@@ -61,11 +61,11 @@ fn draw_help_overlay(frame: &mut Frame, area: Rect) {
     let help_text = vec![
         Line::from(Span::styled("Controls", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
         Line::from(""),
-        Line::from(" Space/Enter  Open chest / Collect"),
-        Line::from(" Tab/BackTab  Switch tabs"),
+        Line::from(" Space        Open chest / Collect"),
+        Line::from(" Enter        Buy upgrade / Learn skill"),
+        Line::from(" Left/Right   Switch tabs"),
         Line::from(" 1-7          Select chest type"),
         Line::from(" Up/Down      Scroll list"),
-        Line::from(" B            Buy upgrade / Learn skill"),
         Line::from(" E            Equip/unequip relic"),
         Line::from(" Q            Quit (auto-saves)"),
         Line::from(" ?            Toggle this help"),

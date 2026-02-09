@@ -7,6 +7,7 @@ pub enum Rarity {
     Rare,
     Epic,
     Legendary,
+    Mythic,
 }
 
 impl Rarity {
@@ -17,6 +18,7 @@ impl Rarity {
             Rarity::Rare => ratatui::style::Color::Blue,
             Rarity::Epic => ratatui::style::Color::Magenta,
             Rarity::Legendary => ratatui::style::Color::Yellow,
+            Rarity::Mythic => ratatui::style::Color::Rgb(255, 50, 50),
         }
     }
 
@@ -27,6 +29,7 @@ impl Rarity {
             Rarity::Rare => "Rare",
             Rarity::Epic => "Epic",
             Rarity::Legendary => "Legendary",
+            Rarity::Mythic => "Mythic",
         }
     }
 
@@ -37,6 +40,7 @@ impl Rarity {
             Rarity::Rare => 6.0,
             Rarity::Epic => 15.0,
             Rarity::Legendary => 50.0,
+            Rarity::Mythic => 150.0,
         }
     }
 
@@ -47,6 +51,7 @@ impl Rarity {
             Rarity::Rare => 4.0,
             Rarity::Epic => 10.0,
             Rarity::Legendary => 25.0,
+            Rarity::Mythic => 60.0,
         }
     }
 }

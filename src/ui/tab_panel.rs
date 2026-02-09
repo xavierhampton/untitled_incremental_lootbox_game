@@ -69,5 +69,6 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         ActiveTab::Relics => tabs::relics::draw(frame, app, sections[2]),
         ActiveTab::Inventory => tabs::inventory::draw(frame, app, sections[2]),
         ActiveTab::Stats => tabs::stats::draw(frame, app, sections[2]),
+        ActiveTab::Rebirth => tabs::rebirth::draw(frame, app, sections[2]),
     }
 }

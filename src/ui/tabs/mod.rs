@@ -1,4 +1,5 @@
 pub mod inventory;
+pub mod rebirth;
 pub mod relics;
 pub mod skills;
 pub mod stats;

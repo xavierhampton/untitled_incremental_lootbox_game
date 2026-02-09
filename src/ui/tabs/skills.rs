@@ -9,7 +9,11 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let skills = all_skills();
     let tree = &app.state.skill_tree;
 
+    // Clamp scroll to valid range
+    let tab_scroll = app.tab_scroll.min(skills.len().saturating_sub(1));
+
     let mut lines = Vec::new();
+    let mut selected_line: u16 = 0;
 
     // Skill points header
     lines.push(Line::from(vec![
@@ -55,7 +59,11 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         let is_learned = tree.has_skill(skill.id);
         let can_learn = tree.can_learn(skill.id);
         let prereqs_met = skill.prerequisites.iter().all(|p| tree.has_skill(p));
-        let is_selected = skill_index == app.tab_scroll;
+        let is_selected = skill_index == tab_scroll;
+
+        if is_selected {
+            selected_line = lines.len() as u16;
+        }
 
         // Status marker
         let (marker, marker_color) = if is_learned {
@@ -80,10 +88,26 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 
         let selector = if is_selected { "\u{25b6}" } else { " " };
 
+        let cost_str = if skill.cost > 1 {
+            format!(" ({}pt)", skill.cost)
+        } else {
+            " (1pt)".to_string()
+        };
+
+        let cost_color = if is_learned {
+            Color::DarkGray
+        } else if tree.skill_points >= skill.cost {
+            Color::Cyan
+        } else {
+            Color::Red
+        };
+
         lines.push(Line::from(vec![
             Span::styled(format!("{} ", selector), Style::default().fg(Color::Yellow)),
             Span::styled(format!("{} ", marker), Style::default().fg(marker_color)),
-            Span::styled(format!("{:<20}", skill.name), name_style),
+            Span::styled(format!("{:<18}", skill.name), name_style),
+            Span::styled(cost_str, Style::default().fg(cost_color)),
+            Span::raw(" "),
             Span::styled(
                 skill.description,
                 if is_learned {
@@ -124,6 +148,15 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         Style::default().fg(Color::DarkGray),
     )));
 
-    let paragraph = Paragraph::new(lines).scroll((0, 0));
+    // Scroll just enough to keep the selected line visible (smooth, 1-line-at-a-time)
+    let visible_height = area.height;
+    let margin = 2u16;
+    let scroll_y = if selected_line + margin >= visible_height {
+        (selected_line + margin + 1).saturating_sub(visible_height)
+    } else {
+        0
+    };
+
+    let paragraph = Paragraph::new(lines).scroll((scroll_y, 0));
     frame.render_widget(paragraph, area);
 }
