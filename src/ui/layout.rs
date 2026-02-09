@@ -269,30 +269,27 @@ fn draw_float_texts(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_settings_overlay(frame: &mut Frame, app: &App, area: Rect) {
-    // Semi-transparent background
-    let bg_area = area;
-    let bg = Block::default()
-        .style(Style::default().bg(Color::Black));
-    frame.render_widget(bg, bg_area);
+    if app.show_dev_options {
+        draw_dev_options_overlay(frame, app, area);
+    } else {
+        draw_main_settings_overlay(frame, app, area);
+    }
+}
 
-    // Settings panel
-    let overlay_width = 60.min(area.width.saturating_sub(4));
-    let overlay_height = 18.min(area.height.saturating_sub(4));
+fn draw_main_settings_overlay(frame: &mut Frame, app: &App, area: Rect) {
+    // Settings panel (centered and compact)
+    let overlay_width = 50.min(area.width.saturating_sub(4));
+    let overlay_height = 11.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(overlay_width)) / 2;
     let y = (area.height.saturating_sub(overlay_height)) / 2;
     let overlay_area = Rect::new(x, y, overlay_width, overlay_height);
 
-    // Clear background
+    // Clear background for settings box
     let clear = ratatui::widgets::Clear;
     frame.render_widget(clear, overlay_area);
 
     let mut settings_lines = vec![
-        Line::from(Span::styled(
-            "Settings",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )),
+        Line::from(""),
         Line::from(""),
     ];
 
@@ -308,9 +305,10 @@ fn draw_settings_overlay(frame: &mut Frame, app: &App, area: Rect) {
         Color::Red
     };
     let is_selected_0 = app.settings_selected == 0;
-    let marker_0 = if is_selected_0 { "\u{25b6} " } else { "  " };
+    let marker_0 = if is_selected_0 { "▶ " } else { "  " };
 
     settings_lines.push(Line::from(vec![
+        Span::raw("      "),
         Span::styled(marker_0, Style::default().fg(Color::Yellow)),
         Span::styled("Animations: ", Style::default().fg(Color::White).add_modifier(
             if is_selected_0 { Modifier::BOLD } else { Modifier::empty() }
@@ -324,30 +322,27 @@ fn draw_settings_overlay(frame: &mut Frame, app: &App, area: Rect) {
     ]));
     settings_lines.push(Line::from(""));
 
-    // Setting 1: Reset game
+    // Setting 1: Dev Options
     let is_selected_1 = app.settings_selected == 1;
-    let marker_1 = if is_selected_1 { "\u{25b6} " } else { "  " };
+    let marker_1 = if is_selected_1 { "▶ " } else { "  " };
 
-    settings_lines.push(Line::from(Span::styled(
-        format!("{}Reset Game", marker_1),
-        Style::default()
-            .fg(Color::Red)
+    settings_lines.push(Line::from(vec![
+        Span::raw("      "),
+        Span::styled(marker_1, Style::default().fg(Color::Yellow)),
+        Span::styled("Dev Options", Style::default()
+            .fg(Color::Magenta)
             .add_modifier(if is_selected_1 {
                 Modifier::BOLD | Modifier::UNDERLINED
             } else {
                 Modifier::empty()
-            }),
-    )));
-    settings_lines.push(Line::from(Span::styled(
-        "    Delete all progress (cannot be undone)",
-        Style::default().fg(Color::DarkGray),
-    )));
+            })),
+    ]));
     settings_lines.push(Line::from(""));
     settings_lines.push(Line::from(""));
 
-    // Controls
+    // Controls at bottom (inside box)
     settings_lines.push(Line::from(Span::styled(
-        "[\u{2191}\u{2193}] Navigate  [E/Enter/Space] Select  [Esc] Close",
+        "[↑↓] Navigate  [E] Select  [Esc] Close",
         Style::default().fg(Color::DarkGray),
     )));
 
@@ -357,4 +352,75 @@ fn draw_settings_overlay(frame: &mut Frame, app: &App, area: Rect) {
         .title(" Settings ");
     let paragraph = Paragraph::new(settings_lines).block(block);
     frame.render_widget(paragraph, overlay_area);
+}
+
+fn draw_dev_options_overlay(frame: &mut Frame, app: &App, area: Rect) {
+    // Dev options panel (centered and larger)
+    let overlay_width = 50.min(area.width.saturating_sub(4));
+    let overlay_height = 18.min(area.height.saturating_sub(4));
+    let x = (area.width.saturating_sub(overlay_width)) / 2;
+    let y = (area.height.saturating_sub(overlay_height)) / 2;
+    let overlay_area = Rect::new(x, y, overlay_width, overlay_height);
+
+    // Clear background
+    let clear = ratatui::widgets::Clear;
+    frame.render_widget(clear, overlay_area);
+
+    // Split into content and controls
+    let inner_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(1),      // Options content
+            Constraint::Length(1),   // Spacer
+            Constraint::Length(1),   // Controls
+        ])
+        .split(overlay_area);
+
+    let mut lines = vec![
+        Line::from(""),
+        Line::from(""),
+    ];
+
+    let options = [
+        ("Reset Game", "Delete all progress", Color::Red),
+        ("Unlock All Chests", "Unlock all chest types", Color::Yellow),
+        ("Max Money", "Set GP to 999,999,999", Color::Yellow),
+        ("Max Skills", "Set skill points to 9999", Color::Cyan),
+        ("Max Essence", "Set essence to 999,999", Color::Magenta),
+    ];
+
+    for (i, (name, desc, color)) in options.iter().enumerate() {
+        let is_selected = app.dev_option_selected == i;
+        let marker = if is_selected { "▶ " } else { "  " };
+
+        lines.push(Line::from(vec![
+            Span::raw("      "),
+            Span::styled(marker, Style::default().fg(Color::Yellow)),
+            Span::styled(*name, Style::default()
+                .fg(*color)
+                .add_modifier(if is_selected {
+                    Modifier::BOLD | Modifier::UNDERLINED
+                } else {
+                    Modifier::empty()
+                })),
+        ]));
+        lines.push(Line::from(Span::styled(
+            format!("        {}", desc),
+            Style::default().fg(Color::DarkGray),
+        )));
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Magenta))
+        .title(" Dev Options ");
+    let paragraph = Paragraph::new(lines).block(block);
+    frame.render_widget(paragraph, inner_layout[0]);
+
+    // Controls at bottom (centered)
+    let controls = Paragraph::new(Line::from(Span::styled(
+        "[↑↓] Navigate  [E] Select  [Esc] Close",
+        Style::default().fg(Color::DarkGray),
+    ))).alignment(Alignment::Center);
+    frame.render_widget(controls, inner_layout[2]);
 }

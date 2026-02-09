@@ -7,7 +7,7 @@ pub struct RelicState {
 }
 
 impl RelicState {
-    pub const MAX_EQUIPPED: usize = 5;
+    pub const MAX_EQUIPPED: usize = 3;
 
     pub fn owns(&self, id: &str) -> bool {
         self.owned.iter().any(|r| r == id)

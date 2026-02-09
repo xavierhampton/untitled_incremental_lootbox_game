@@ -81,6 +81,8 @@ pub struct App {
     pub show_chest_menu: bool,        // show chest selection popup
     pub show_settings: bool,          // show settings menu
     pub settings_selected: usize,     // selected setting option
+    pub show_dev_options: bool,       // show dev options submenu
+    pub dev_option_selected: usize,   // selected dev option
     // Settings
     pub setting_show_animations: bool,   // show fireworks/flashes
 }
@@ -148,6 +150,8 @@ impl App {
             show_chest_menu: false,
             show_settings: false,
             settings_selected: 0,
+            show_dev_options: false,
+            dev_option_selected: 0,
             setting_show_animations: true,
         };
 
@@ -262,6 +266,11 @@ impl App {
             KeyCode::Esc => {
                 // Toggle settings menu
                 self.show_settings = !self.show_settings;
+                // Reset to main settings when closing
+                if !self.show_settings {
+                    self.show_dev_options = false;
+                    self.settings_selected = 0;
+                }
                 return false;
             }
             KeyCode::Char('?') => {
@@ -1275,7 +1284,7 @@ impl App {
         let extra_slots = self.state.upgrades.get_level("deep_pockets") as usize;
         let rebirth_slot = if self.state.rebirth.has_rebirth_skill("rb_relic_slot") { 1 } else { 0 };
         let world_explorer_slot = if self.state.skill_tree.has_skill("world_explorer") { 1 } else { 0 };
-        let max_equipped = 5 + extra_slots + rebirth_slot + world_explorer_slot;
+        let max_equipped = 3 + extra_slots + rebirth_slot + world_explorer_slot;
 
         if self.state.relics.is_equipped(&id) {
             self.state.relics.unequip(&id);
@@ -1751,7 +1760,7 @@ impl App {
         let extra_slots = self.state.upgrades.get_level("deep_pockets") as usize;
         let rebirth_slot = if self.state.rebirth.has_rebirth_skill("rb_relic_slot") { 1 } else { 0 };
         let world_explorer_slot = if self.state.skill_tree.has_skill("world_explorer") { 1 } else { 0 };
-        5 + extra_slots + rebirth_slot + world_explorer_slot
+        3 + extra_slots + rebirth_slot + world_explorer_slot
     }
 
     fn add_message(&mut self, msg: String) {
@@ -1763,7 +1772,12 @@ impl App {
     }
 
     fn handle_settings_input(&mut self, key: KeyEvent) -> bool {
-        const NUM_SETTINGS: usize = 2; // Animations, Reset
+        // If in dev options submenu, handle separately
+        if self.show_dev_options {
+            return self.handle_dev_options_input(key);
+        }
+
+        const NUM_SETTINGS: usize = 2; // Animations, Dev Options
 
         match key.code {
             KeyCode::Up => {
@@ -1774,7 +1788,7 @@ impl App {
                 self.settings_selected = (self.settings_selected + 1).min(NUM_SETTINGS - 1);
                 false
             }
-            KeyCode::Enter | KeyCode::Char(' ') | KeyCode::Char('e') | KeyCode::Char('E') => {
+            KeyCode::Char('e') | KeyCode::Char('E') => {
                 match self.settings_selected {
                     0 => {
                         // Toggle animations
@@ -1787,8 +1801,67 @@ impl App {
                         self.add_message(msg.to_string());
                     }
                     1 => {
+                        // Enter Dev Options
+                        self.show_dev_options = true;
+                        self.dev_option_selected = 0;
+                    }
+                    _ => {}
+                }
+                false
+            }
+            _ => false
+        }
+    }
+
+    fn handle_dev_options_input(&mut self, key: KeyEvent) -> bool {
+        const NUM_DEV_OPTIONS: usize = 4; // Reset, Unlock Chests, Max Money, Max Skills, Max Essence
+
+        match key.code {
+            KeyCode::Esc => {
+                // Go back to main settings
+                self.show_dev_options = false;
+                self.settings_selected = 0;
+                false
+            }
+            KeyCode::Up => {
+                self.dev_option_selected = self.dev_option_selected.saturating_sub(1);
+                false
+            }
+            KeyCode::Down => {
+                self.dev_option_selected = (self.dev_option_selected + 1).min(NUM_DEV_OPTIONS);
+                false
+            }
+            KeyCode::Char('e') | KeyCode::Char('E') => {
+                match self.dev_option_selected {
+                    0 => {
                         // Reset game
                         self.reset_game();
+                        self.add_message("Game reset!".to_string());
+                    }
+                    1 => {
+                        // Unlock all chests
+                        use crate::game::chest::ChestType;
+                        for ct in ChestType::ALL {
+                            if !self.state.unlocked_chests.contains(&ct) {
+                                self.state.unlocked_chests.push(ct);
+                            }
+                        }
+                        self.add_message("All chests unlocked!".to_string());
+                    }
+                    2 => {
+                        // Max money
+                        self.state.player.gp = 999_999_999;
+                        self.add_message("Max GP granted!".to_string());
+                    }
+                    3 => {
+                        // Max skills
+                        self.state.skill_tree.skill_points = 9999;
+                        self.add_message("Max skill points granted!".to_string());
+                    }
+                    4 => {
+                        // Max essence
+                        self.state.rebirth.essence = 999_999;
+                        self.add_message("Max essence granted!".to_string());
                     }
                     _ => {}
                 }
