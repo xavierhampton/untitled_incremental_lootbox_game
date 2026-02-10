@@ -6,6 +6,7 @@ use ratatui::style::Color;
 
 use crate::animation::fireworks::FireworkManager;
 use crate::animation::screen_flash::FlashManager;
+use crate::audio::SoundManager;
 use crate::data::chests::loot_table_for;
 use crate::data::items::get_item;
 use crate::data::rebirth_skills::all_rebirth_skills;
@@ -64,8 +65,6 @@ pub struct App {
     pub screen_w: u16,
     pub screen_h: u16,
     // Skill trigger counters
-    pub non_rare_streak: u32,
-    pub chests_since_jackpot: u32,
     pub chests_since_xp_surge: u32,
     pub idle_income_ticks: u32,
     // New skill counters
@@ -77,14 +76,21 @@ pub struct App {
     pub catalyst_stacks: f64,         // catalyst_brew (resets on rebirth)
     pub rebirth_confirm: bool,        // R key double-press confirmation
     pub rare_streak_count: u32,       // lucky_streak tracking
+    pub consecutive_crits: u32,       // combo_counter tracking
     pub auto_opener_paused: bool,     // pause auto opener with 'P'
     pub show_chest_menu: bool,        // show chest selection popup
+    pub chest_menu_selected: usize,   // selected chest in menu (0-6)
     pub show_settings: bool,          // show settings menu
     pub settings_selected: usize,     // selected setting option
     pub show_dev_options: bool,       // show dev options submenu
     pub dev_option_selected: usize,   // selected dev option
     // Settings
     pub setting_show_animations: bool,   // show fireworks/flashes
+    pub setting_chest_sounds: bool,      // play chest open/reveal/collect/level-up sounds
+    pub setting_ui_sounds: bool,         // play click/tab/menu/error/purchase/sell sounds
+    pub setting_volume: f32,             // 0.0-1.0, default 0.8
+    // Audio
+    pub sound: Option<SoundManager>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +127,8 @@ impl App {
                 .migrate_from_old_save(state.player.level, old_iron, old_silver, old_gold, old_auto);
         }
 
+        let saved_volume = state.volume;
+
         let mut app = Self {
             state,
             active_tab: ActiveTab::Skills,
@@ -134,8 +142,6 @@ impl App {
             flashes: FlashManager::default(),
             screen_w: 80,
             screen_h: 24,
-            non_rare_streak: 0,
-            chests_since_jackpot: 0,
             chests_since_xp_surge: 0,
             idle_income_ticks: 0,
             consecutive_chests: 0,
@@ -146,14 +152,25 @@ impl App {
             catalyst_stacks: 0.0,
             rebirth_confirm: false,
             rare_streak_count: 0,
+            consecutive_crits: 0,
             auto_opener_paused: false,
             show_chest_menu: false,
+            chest_menu_selected: 0,
             show_settings: false,
             settings_selected: 0,
             show_dev_options: false,
             dev_option_selected: 0,
             setting_show_animations: true,
+            setting_chest_sounds: true,
+            setting_ui_sounds: true,
+            setting_volume: saved_volume,
+            sound: SoundManager::new(),
         };
+
+        // Apply volume from saved state
+        if let Some(ref mut snd) = app.sound {
+            snd.set_volume(app.setting_volume);
+        }
 
         // Apply rebirth bonuses on load
         app.apply_rebirth_bonuses();
@@ -179,11 +196,10 @@ impl App {
         // Tick chest progress
         self.state.chest_progress.tick();
 
-        // Auto-opener: skill tree version or legacy upgrade (only if not paused)
+        // Auto-opener: skill tree version or legacy upgrade
         let has_auto_skill = self.state.skill_tree.has_skill("auto_opener");
         let has_auto_upgrade = self.state.upgrades.get_level("auto_opener") > 0;
-        if !self.auto_opener_paused
-            && (has_auto_skill || has_auto_upgrade)
+        if (has_auto_skill || has_auto_upgrade)
             && self.state.chest_progress.state == ChestState::Idle
         {
             self.start_opening();
@@ -191,9 +207,17 @@ impl App {
 
         // Auto-collect after reveal
         let quick_collect = self.state.skill_tree.has_skill("quick_collect");
+        let perpetual = self.state.skill_tree.has_skill("perpetual_motion");
         if self.state.chest_progress.state == ChestState::Revealing {
             // Quick Collect: auto-collect after 30 ticks (~1 second)
             if quick_collect && self.state.chest_progress.reveal_ticks > 30 {
+                self.collect_and_reset();
+            }
+            // Perpetual Motion: auto-collect after 30 ticks (~1 second)
+            else if perpetual
+                && (has_auto_upgrade || has_auto_skill)
+                && self.state.chest_progress.reveal_ticks > 30
+            {
                 self.collect_and_reset();
             }
             // Legacy auto-collect or auto opener skill: after 60 ticks
@@ -204,19 +228,21 @@ impl App {
             }
         }
 
-        // Idle Income: earn 2 GP per second while chest is idle
+        // Idle Income: earn GP per second while chest is idle, scales with level + GP multiplier
         if self.state.skill_tree.has_skill("idle_income")
             && self.state.chest_progress.state == ChestState::Idle
         {
             self.idle_income_ticks += 1;
             let idle_rate = if self.state.skill_tree.has_skill("temporal_mastery") {
-                4 // 30 / 8 = earn 8x per second (every 4 ticks, gp = 2)
+                4 // ~8 payouts per second
             } else {
-                15 // 2 GP per second (every 15 ticks)
+                15 // ~2 payouts per second
             };
             if self.idle_income_ticks >= idle_rate {
                 self.idle_income_ticks = 0;
-                let gp = 2;
+                // Base 5 GP, scaling with level and GP multiplier
+                let base = 5.0 + self.state.player.level as f64 * 2.0;
+                let gp = (base * self.state.player.gp_multiplier).max(1.0) as u64;
                 self.state.player.gp += gp;
                 self.state.stats.total_gp_earned += gp;
                 self.state.rebirth.gp_earned_this_run += gp;
@@ -266,6 +292,11 @@ impl App {
             KeyCode::Esc => {
                 // Toggle settings menu
                 self.show_settings = !self.show_settings;
+                if self.show_settings {
+                    self.play_ui(|s| s.play_menu_open());
+                } else {
+                    self.play_ui(|s| s.play_menu_close());
+                }
                 // Reset to main settings when closing
                 if !self.show_settings {
                     self.show_dev_options = false;
@@ -273,17 +304,7 @@ impl App {
                 }
                 return false;
             }
-            KeyCode::Char('?') => {
-                self.show_help = !self.show_help;
-                return false;
-            }
             _ => {}
-        }
-
-        if self.show_help {
-            // Any key closes help
-            self.show_help = false;
-            return false;
         }
 
         if self.show_settings {
@@ -297,37 +318,29 @@ impl App {
         }
 
         match key.code {
-            // Chest interaction / Open menu / Pause/Resume (when auto opener active)
+            // Chest interaction / Open or collect chest
             KeyCode::Char(' ') => {
-                // Check if auto opener is active
-                let has_auto = self.state.skill_tree.has_skill("auto_opener")
-                    || self.state.upgrades.get_level("auto_opener") > 0;
-
-                if has_auto {
-                    // With auto opener: Space always toggles pause/resume
-                    self.auto_opener_paused = !self.auto_opener_paused;
-                    let msg = if self.auto_opener_paused {
-                        "Auto opener PAUSED"
-                    } else {
-                        "Auto opener RESUMED"
-                    };
-                    self.add_message(msg.to_string());
-                } else {
-                    // Without auto opener: Space opens/collects chest
-                    match self.state.chest_progress.state {
-                        ChestState::Idle => {
-                            self.start_opening();
-                        }
-                        ChestState::Opening => {} // can't interact while opening
-                        ChestState::Revealing | ChestState::Complete => {
+                self.play_chest(|s| s.play_click());
+                match self.state.chest_progress.state {
+                    ChestState::Idle => {
+                        self.start_opening();
+                    }
+                    ChestState::Opening => {} // can't interact while opening
+                    ChestState::Revealing => {
+                        // Require minimum reveal time so holding space doesn't skip it
+                        if self.state.chest_progress.reveal_ticks >= 5 {
                             self.collect_and_reset();
                         }
+                    }
+                    ChestState::Complete => {
+                        self.collect_and_reset();
                     }
                 }
             }
 
             // Tab switching
             KeyCode::Tab | KeyCode::Right => {
+                self.play_ui(|s| s.play_tab_switch());
                 let idx = ActiveTab::ALL
                     .iter()
                     .position(|&t| t == self.active_tab)
@@ -337,6 +350,7 @@ impl App {
                 self.rebirth_confirm = false;
             }
             KeyCode::BackTab | KeyCode::Left => {
+                self.play_ui(|s| s.play_tab_switch());
                 let idx = ActiveTab::ALL
                     .iter()
                     .position(|&t| t == self.active_tab)
@@ -350,6 +364,11 @@ impl App {
             // Toggle chest menu with 'C'
             KeyCode::Char('c') | KeyCode::Char('C') => {
                 self.show_chest_menu = !self.show_chest_menu;
+                if self.show_chest_menu {
+                    self.play_ui(|s| s.play_menu_open());
+                } else {
+                    self.play_ui(|s| s.play_menu_close());
+                }
             }
 
             // Tab-specific controls
@@ -418,10 +437,34 @@ impl App {
     }
 
     fn handle_chest_menu_input(&mut self, key: KeyEvent) -> bool {
+        use crate::game::chest::ChestType;
+
         match key.code {
             // Close chest menu with Space, C, or Esc
             KeyCode::Char(' ') | KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Esc => {
                 self.show_chest_menu = false;
+                self.play_ui(|s| s.play_menu_close());
+            }
+            // Arrow key navigation
+            KeyCode::Up => {
+                self.chest_menu_selected = self.chest_menu_selected.saturating_sub(1);
+            }
+            KeyCode::Down => {
+                self.chest_menu_selected = (self.chest_menu_selected + 1).min(ChestType::ALL.len() - 1);
+            }
+            // Select chest with E or Enter
+            KeyCode::Char('e') | KeyCode::Char('E') | KeyCode::Enter => {
+                let ct = ChestType::ALL[self.chest_menu_selected];
+                if self.state.unlocked_chests.contains(&ct) {
+                    self.play_ui(|s| s.play_click());
+                    self.state.current_chest_type = ct;
+                    self.show_chest_menu = false;
+                    self.start_opening();
+                    self.add_message(format!("Opening {} chest...", ct.name()));
+                } else {
+                    self.play_ui(|s| s.play_error());
+                    self.add_message(format!("{} chest is locked!", ct.name()));
+                }
             }
             // Select chest with number keys 1-7
             KeyCode::Char(c @ '1'..='7') => {
@@ -429,11 +472,13 @@ impl App {
                 if idx < ChestType::ALL.len() {
                     let ct = ChestType::ALL[idx];
                     if self.state.unlocked_chests.contains(&ct) {
+                        self.play_ui(|s| s.play_click());
                         self.state.current_chest_type = ct;
                         self.show_chest_menu = false;
                         self.start_opening();
                         self.add_message(format!("Opening {} chest...", ct.name()));
                     } else {
+                        self.play_ui(|s| s.play_error());
                         self.add_message(format!("{} chest is locked!", ct.name()));
                     }
                 }
@@ -462,14 +507,29 @@ impl App {
             speed *= 1.5;
         }
 
+        self.play_chest(|s| s.play_chest_start());
         self.state
             .chest_progress
             .start_opening(self.state.current_chest_type, speed);
+
+        // Skill: Burst Open - 15% chance to instantly open
+        if self.state.skill_tree.has_skill("burst_open") && self.rng.random::<f64>() < 0.15 {
+            self.state.chest_progress.ticks_elapsed = self.state.chest_progress.ticks_required;
+        }
     }
 
     fn roll_loot(&mut self) {
         let table = loot_table_for(self.state.current_chest_type);
-        let weighted = table.weighted_entries(self.state.player.luck);
+
+        // Upgrade: Void Sight - +15% rare+ item chance per level (increases luck for weighting)
+        let void_sight_level = self.state.upgrades.get_level("void_sight");
+        let effective_luck = if void_sight_level > 0 {
+            self.state.player.luck + (void_sight_level as f64 * 15.0)
+        } else {
+            self.state.player.luck
+        };
+
+        let weighted = table.weighted_entries(effective_luck);
         let total_weight: f64 = weighted.iter().map(|(_, w)| w).sum();
         let mut roll: f64 = self.rng.random::<f64>() * total_weight;
 
@@ -511,6 +571,22 @@ impl App {
             }
         }
 
+        // Upgrade: Horseshoe - +1% rarity upgrade chance per level
+        let horseshoe_level = self.state.upgrades.get_level("horseshoe");
+        if horseshoe_level > 0 {
+            let chance = horseshoe_level as f64 * 0.01;
+            if self.rng.random::<f64>() < chance && item_rarity != Rarity::Mythic {
+                item_rarity = match item_rarity {
+                    Rarity::Common => Rarity::Uncommon,
+                    Rarity::Uncommon => Rarity::Rare,
+                    Rarity::Rare => Rarity::Epic,
+                    Rarity::Epic => Rarity::Legendary,
+                    Rarity::Legendary => Rarity::Mythic,
+                    Rarity::Mythic => Rarity::Mythic,
+                };
+            }
+        }
+
         // Skill: Gambler's Spirit - after 3 empty/common streaks, force Rare+
         if self.state.skill_tree.has_skill("gambler_spirit") {
             if matches!(item_rarity, Rarity::Common) {
@@ -527,39 +603,8 @@ impl App {
             }
         }
 
-        // Skill: Pity Timer - force Rare+ after streak
-        let pity_threshold = if self.state.skill_tree.has_skill("golden_rain") {
-            5
-        } else {
-            10
-        };
-        if self.state.skill_tree.has_skill("pity_timer") && self.non_rare_streak >= pity_threshold {
-            if matches!(item_rarity, Rarity::Common | Rarity::Uncommon) {
-                item_rarity = Rarity::Rare;
-            }
-        }
-
-        // Skill: Jackpot - every 40th chest is Epic+
-        self.chests_since_jackpot += 1;
-        if self.state.skill_tree.has_skill("jackpot") && self.chests_since_jackpot >= 40 {
-            self.chests_since_jackpot = 0;
-            if matches!(
-                item_rarity,
-                Rarity::Common | Rarity::Uncommon | Rarity::Rare
-            ) {
-                item_rarity = Rarity::Epic;
-            }
-        }
-
-        // Track pity counter
-        if matches!(item_rarity, Rarity::Common | Rarity::Uncommon) {
-            self.non_rare_streak += 1;
-        } else {
-            self.non_rare_streak = 0;
-        }
-
         // Track lucky_streak (consecutive rare+ finds)
-        if matches!(item_rarity, Rarity::Rare | Rarity::Epic | Rarity::Legendary) {
+        if matches!(item_rarity, Rarity::Rare | Rarity::Epic | Rarity::Legendary | Rarity::Mythic) {
             self.rare_streak_count += 1;
         } else {
             self.rare_streak_count = 0;
@@ -618,9 +663,9 @@ impl App {
             self.state.stats.crits_rolled += 1;
         }
 
-        // Skill: Midas Touch - +150% base GP on items
+        // Skill: Midas Touch - +100% base GP on items
         let gp_base = if self.state.skill_tree.has_skill("midas_touch") {
-            (item_def.base_gp as f64 * 2.5) as u64
+            (item_def.base_gp as f64 * 2.0) as u64
         } else {
             item_def.base_gp
         };
@@ -634,31 +679,46 @@ impl App {
             1.0
         };
 
+        let chest_reward = self.state.current_chest_type.reward_multiplier();
+
         let mut gp_value = (gp_base as f64
             * item_rarity.gp_multiplier()
             * self.state.player.gp_multiplier
             * crit_mult
-            * material_bonus) as u64;
+            * material_bonus
+            * chest_reward) as u64;
 
-        // Skill: Fortune Favors - +10% GP
+        // Skill: Fortune Favors - +25% GP
         if self.state.skill_tree.has_skill("fortune_favors") {
-            gp_value = (gp_value as f64 * 1.10) as u64;
+            gp_value = (gp_value as f64 * 1.25) as u64;
         }
 
-        // Skill: Lucky Streak - consecutive rare+ finds give +15% GP each
+        // Skill: Lucky Streak - consecutive rare+ finds give +20% GP each
         if self.state.skill_tree.has_skill("lucky_streak") && self.rare_streak_count > 1 {
-            let bonus = 1.0 + (self.rare_streak_count - 1) as f64 * 0.15;
+            let bonus = 1.0 + (self.rare_streak_count - 1) as f64 * 0.20;
             gp_value = (gp_value as f64 * bonus) as u64;
         }
 
-        // Skill: Golden Rain capstone - +40% GP
+        // Skill: Golden Rain capstone - +80% GP (windfall doubling handled in windfall section)
         if self.state.skill_tree.has_skill("golden_rain") {
-            gp_value = (gp_value as f64 * 1.40) as u64;
+            gp_value = (gp_value as f64 * 1.80) as u64;
         }
 
         // Skill: Grand Mastery capstone - +40% all multipliers
         if self.state.skill_tree.has_skill("grand_mastery") {
             gp_value = (gp_value as f64 * 1.40) as u64;
+        }
+
+        // Upgrade: Combo Counter - +5% GP per consecutive crit per level
+        let combo_counter_level = self.state.upgrades.get_level("combo_counter");
+        if combo_counter_level > 0 && is_crit {
+            self.consecutive_crits += 1;
+            if self.consecutive_crits > 1 {
+                let bonus = 1.0 + (self.consecutive_crits - 1) as f64 * (combo_counter_level as f64 * 0.05);
+                gp_value = (gp_value as f64 * bonus) as u64;
+            }
+        } else if !is_crit {
+            self.consecutive_crits = 0;
         }
 
         // Upgrade: Legendary Focus - +10% legendary GP per level
@@ -669,11 +729,11 @@ impl App {
             }
         }
 
-        // Skill: Legendary Aura - legendary items give 4x XP
+        // Skill: Legendary Aura - legendary items give 3x XP
         let xp_rarity_mult = if item_rarity == Rarity::Legendary
             && self.state.skill_tree.has_skill("legendary_aura")
         {
-            item_rarity.xp_multiplier() * 4.0
+            item_rarity.xp_multiplier() * 3.0
         } else {
             item_rarity.xp_multiplier()
         };
@@ -681,16 +741,17 @@ impl App {
         let mut xp_value = (item_def.base_xp as f64
             * xp_rarity_mult
             * self.state.player.xp_multiplier
-            * crit_mult) as u64;
+            * crit_mult
+            * chest_reward) as u64;
 
-        // Skill: Deep Knowledge - +150% XP
+        // Skill: Deep Knowledge - +100% XP
         if self.state.skill_tree.has_skill("deep_knowledge") {
-            xp_value = (xp_value as f64 * 2.5) as u64;
+            xp_value = (xp_value as f64 * 2.0) as u64;
         }
 
-        // Skill: Precision Strike - crits give +75% XP
+        // Skill: Precision Strike - crits give +50% XP
         if is_crit && self.state.skill_tree.has_skill("precision_strike") {
-            xp_value = (xp_value as f64 * 1.75) as u64;
+            xp_value = (xp_value as f64 * 1.50) as u64;
         }
 
         // Skill: Grand Mastery capstone - +40% all multipliers (XP too)
@@ -698,10 +759,10 @@ impl App {
             xp_value = (xp_value as f64 * 1.40) as u64;
         }
 
-        // Skill: XP Surge - every 4th chest gives 6x XP
-        if self.state.skill_tree.has_skill("xp_surge") && self.chests_since_xp_surge >= 4 {
+        // Skill: XP Surge - every 5th chest gives 5x XP
+        if self.state.skill_tree.has_skill("xp_surge") && self.chests_since_xp_surge >= 5 {
             self.chests_since_xp_surge = 0;
-            xp_value *= 6;
+            xp_value *= 5;
         }
 
         // Skill: Entropy - loot values vary ±30%
@@ -711,21 +772,52 @@ impl App {
             xp_value = (xp_value as f64 * variance) as u64;
         }
 
-        // Skill: Double or Nothing - 25% double, 8% nothing
+        // Skill: Double or Nothing - 30% double, 5% nothing
         if self.state.skill_tree.has_skill("double_or_nothing") {
             let don_roll = self.rng.random::<f64>();
-            if don_roll < 0.25 {
+            if don_roll < 0.30 {
                 gp_value *= 2;
                 xp_value *= 2;
-            } else if don_roll < 0.33 {
+            } else if don_roll < 0.35 {
                 gp_value = 0;
                 xp_value = 0;
             }
         }
 
-        // Skill: Golden Touch - 20% chance to double final GP
-        if self.state.skill_tree.has_skill("golden_touch") && self.rng.random::<f64>() < 0.20 {
+        // Skill: Golden Touch - 25% chance to double final GP
+        if self.state.skill_tree.has_skill("golden_touch") && self.rng.random::<f64>() < 0.25 {
             gp_value *= 2;
+        }
+
+        // Skill: Windfall - 3% chance for 10x GP (6% with Golden Rain)
+        if self.state.skill_tree.has_skill("windfall") {
+            let windfall_chance = if self.state.skill_tree.has_skill("golden_rain") {
+                0.06
+            } else {
+                0.03
+            };
+            if self.rng.random::<f64>() < windfall_chance {
+                gp_value *= 10;
+                self.add_message("WINDFALL! 10x GP!".to_string());
+                if self.setting_show_animations {
+                    self.flashes.spawn(Color::Yellow, 12);
+                }
+            }
+        }
+
+        // Skill: High Roller - +15% GP per chest tier above Wooden
+        if self.state.skill_tree.has_skill("high_roller") {
+            let tier = self.state.current_chest_type.index();
+            if tier > 0 {
+                let bonus = 1.0 + tier as f64 * 0.15;
+                gp_value = (gp_value as f64 * bonus) as u64;
+            }
+        }
+
+        // Skill: Gold Rush - 10% chance for bonus GP equal to item value
+        if self.state.skill_tree.has_skill("gold_rush") && self.rng.random::<f64>() < 0.10 {
+            gp_value *= 2;
+            self.add_message("Gold Rush! Double GP!".to_string());
         }
 
         // Skill: Reality Tear - 1% (2% with pandemonium) chance for 20x GP
@@ -865,6 +957,12 @@ impl App {
             dir: FloatDir::Right,
         });
 
+        // Sound effects for reveal
+        self.play_chest(|s| s.play_reveal(item_rarity));
+        if is_crit {
+            self.play_chest(|s| s.play_crit());
+        }
+
         // Fireworks scaled by rarity — centered near the chest art
         self.spawn_rarity_fireworks(item_rarity);
 
@@ -930,12 +1028,15 @@ impl App {
 
         let entry = &table.entries[chosen_idx];
         if let Some(item_def) = get_item(entry.item_id) {
+            let chest_reward = self.state.current_chest_type.reward_multiplier();
             let gp_value = (item_def.base_gp as f64
                 * item_def.rarity.gp_multiplier()
-                * self.state.player.gp_multiplier) as u64;
+                * self.state.player.gp_multiplier
+                * chest_reward) as u64;
             let xp_value = (item_def.base_xp as f64
                 * item_def.rarity.xp_multiplier()
-                * self.state.player.xp_multiplier) as u64;
+                * self.state.player.xp_multiplier
+                * chest_reward) as u64;
 
             self.state.player.gp += gp_value;
             self.state.stats.total_gp_earned += gp_value;
@@ -956,6 +1057,47 @@ impl App {
             self.add_message(format!("Multi-Drop: bonus {}!", item_def.name));
             self.state.inventory.add(instance);
         }
+
+        // Upgrade: Chest Radar - +10% chance for bonus chest drops per level
+        let chest_radar_level = self.state.upgrades.get_level("chest_radar");
+        if chest_radar_level > 0 {
+            let chance = chest_radar_level as f64 * 0.10;
+            if self.rng.random::<f64>() < chance {
+                // Roll another loot item
+                self.add_message("Chest Radar: Bonus drop!".to_string());
+                // Recursively call roll_loot (but we need to be careful about infinite recursion)
+                // Instead, let's just give a bonus item from the same table
+                let table = loot_table_for(self.state.current_chest_type);
+                let weighted = table.weighted_entries(self.state.player.luck);
+                let total_weight: f64 = weighted.iter().map(|(_, w)| w).sum();
+                let mut roll: f64 = self.rng.random::<f64>() * total_weight;
+
+                let mut chosen_idx = 0;
+                for (idx, weight) in &weighted {
+                    roll -= weight;
+                    if roll <= 0.0 {
+                        chosen_idx = *idx;
+                        break;
+                    }
+                }
+
+                if let Some(item_def) = get_item(table.entries[chosen_idx].item_id) {
+                    let chest_reward = self.state.current_chest_type.reward_multiplier();
+                    let gp_value = (item_def.base_gp as f64 * chest_reward) as u64;
+                    let xp_value = (item_def.base_xp as f64 * chest_reward) as u64;
+                    let instance = ItemInstance {
+                        id: item_def.id.to_string(),
+                        name: item_def.name.to_string(),
+                        rarity: item_def.rarity,
+                        gp_value,
+                        xp_value,
+                        is_crit: false,
+                        count: 1,
+                    };
+                    self.state.inventory.add(instance);
+                }
+            }
+        }
     }
 
     fn roll_scavenger_item(&mut self) {
@@ -965,12 +1107,15 @@ impl App {
         for entry in &table.entries {
             if let Some(item_def) = get_item(entry.item_id) {
                 if item_def.rarity == Rarity::Common {
+                    let chest_reward = self.state.current_chest_type.reward_multiplier();
                     let gp_value = (item_def.base_gp as f64
                         * item_def.rarity.gp_multiplier()
-                        * self.state.player.gp_multiplier) as u64;
+                        * self.state.player.gp_multiplier
+                        * chest_reward) as u64;
                     let xp_value = (item_def.base_xp as f64
                         * item_def.rarity.xp_multiplier()
-                        * self.state.player.xp_multiplier) as u64;
+                        * self.state.player.xp_multiplier
+                        * chest_reward) as u64;
 
                     self.state.player.gp += gp_value;
                     self.state.stats.total_gp_earned += gp_value;
@@ -1069,6 +1214,7 @@ impl App {
             self.state.player.xp_to_next = xp_for_level(self.state.player.level);
             // Grant 1 skill point per level
             self.state.skill_tree.skill_points += 1;
+            self.play_chest(|s| s.play_level_up());
             self.add_message(format!(
                 "LEVEL UP! Level {} (+1 Skill Point)",
                 self.state.player.level
@@ -1084,7 +1230,13 @@ impl App {
     fn check_chest_unlocks(&mut self) {
         for ct in ChestType::ALL {
             if !self.state.unlocked_chests.contains(&ct) {
-                let level_req = ct.required_level();
+                let mut level_req = ct.required_level();
+
+                // Cartographer: Unlock chests 3 levels earlier
+                if self.state.skill_tree.has_skill("cartographer") {
+                    level_req = level_req.saturating_sub(3);
+                }
+
                 let meets_level = self.state.player.level >= level_req;
 
                 let has_key = match ct {
@@ -1153,34 +1305,65 @@ impl App {
         }
 
         if self.rng.random::<f64>() < drop_chance {
-            // Pick a relic we don't own yet
-            let available: Vec<_> = relics::all_relics()
+            // All relics eligible for this chest tier (including already owned)
+            let candidates: Vec<_> = relics::all_relics()
                 .into_iter()
-                .filter(|r| r.min_chest_tier <= chest_tier && !self.state.relics.owns(r.id))
+                .filter(|r| r.min_chest_tier <= chest_tier)
                 .collect();
 
-            if let Some(relic) = available.first() {
-                self.state.relics.add_relic(relic.id.to_string());
-                self.add_message(format!("RELIC FOUND: {}!", relic.name));
-                self.float_texts.push(FloatText {
-                    text: format!("NEW RELIC: {}", relic.name),
-                    color: relic.rarity.color(),
-                    ticks_remaining: 90,
-                    total_ticks: 90,
-                    x_offset: 0,
-                    dir: FloatDir::Up,
-                });
+            if candidates.is_empty() {
+                return;
             }
+
+            // Weight by rarity: rarer relics are much harder to roll
+            let weights: Vec<f64> = candidates
+                .iter()
+                .map(|r| match r.rarity {
+                    Rarity::Uncommon => 50.0,
+                    Rarity::Rare => 20.0,
+                    Rarity::Epic => 8.0,
+                    Rarity::Legendary => 3.0,
+                    Rarity::Mythic => 1.0,
+                    _ => 0.0,
+                })
+                .collect();
+
+            let total_weight: f64 = weights.iter().sum();
+            let mut roll = self.rng.random::<f64>() * total_weight;
+
+            let mut chosen_idx = 0;
+            for (i, w) in weights.iter().enumerate() {
+                roll -= w;
+                if roll <= 0.0 {
+                    chosen_idx = i;
+                    break;
+                }
+            }
+
+            let relic = &candidates[chosen_idx];
+
+            // Duplicate: if already owned, nothing happens
+            if self.state.relics.owns(relic.id) {
+                return;
+            }
+
+            self.state.relics.add_relic(relic.id.to_string());
+            self.add_message(format!("RELIC FOUND: {}!", relic.name));
+            self.float_texts.push(FloatText {
+                text: format!("NEW RELIC: {}", relic.name),
+                color: relic.rarity.color(),
+                ticks_remaining: 90,
+                total_ticks: 90,
+                x_offset: 0,
+                dir: FloatDir::Up,
+            });
         }
     }
 
     fn collect_and_reset(&mut self) {
+        self.play_chest(|s| s.play_collect());
         self.state.chest_progress.collect();
 
-        // Skill: Chain Opener - immediately start the next chest
-        if self.state.skill_tree.has_skill("chain_opener") {
-            self.start_opening();
-        }
     }
 
     fn try_learn_skill(&mut self) {
@@ -1190,14 +1373,18 @@ impl App {
         }
         let skill = &skills[self.tab_scroll];
         if self.state.skill_tree.learn(skill.id) {
+            self.play_ui(|s| s.play_purchase());
             self.add_message(format!("Learned: {}!", skill.name));
             self.recalculate_player_stats();
             self.check_chest_unlocks();
         } else if self.state.skill_tree.has_skill(skill.id) {
+            self.play_ui(|s| s.play_error());
             self.add_message("Already learned!".to_string());
         } else if self.state.skill_tree.skill_points == 0 {
+            self.play_ui(|s| s.play_error());
             self.add_message("No skill points!".to_string());
         } else {
+            self.play_ui(|s| s.play_error());
             self.add_message("Prerequisites not met!".to_string());
         }
     }
@@ -1210,6 +1397,7 @@ impl App {
         let upg = &upgrades[self.tab_scroll];
         let current_level = self.state.upgrades.get_level(upg.id);
         if current_level >= upg.max_level {
+            self.play_ui(|s| s.play_error());
             self.add_message("Already maxed!".to_string());
             return;
         }
@@ -1226,6 +1414,7 @@ impl App {
                 _ => 1,
             };
             if self.state.player.level < req_level {
+                self.play_ui(|s| s.play_error());
                 self.add_message(format!("Need level {}!", req_level));
                 return;
             }
@@ -1233,9 +1422,11 @@ impl App {
 
         let cost = upg.cost_at_level(current_level);
         if self.state.player.gp < cost {
+            self.play_ui(|s| s.play_error());
             self.add_message(format!("Need {} GP!", cost));
             return;
         }
+        self.play_ui(|s| s.play_purchase());
         self.state.player.gp -= cost;
         self.state.upgrades.increment(upg.id);
         self.add_message(format!(
@@ -1318,14 +1509,18 @@ impl App {
         }
         let skill = &skills[self.tab_scroll];
         if self.state.rebirth.has_rebirth_skill(skill.id) {
+            self.play_ui(|s| s.play_error());
             self.add_message("Already learned!".to_string());
         } else if self.state.rebirth.learn_rebirth_skill(skill.id) {
+            self.play_ui(|s| s.play_purchase());
             self.add_message(format!("Learned rebirth skill: {}!", skill.name));
             self.apply_rebirth_bonuses();
             self.recalculate_player_stats();
         } else if self.state.rebirth.essence < skill.essence_cost {
+            self.play_ui(|s| s.play_error());
             self.add_message(format!("Need {} Essence!", skill.essence_cost));
         } else {
+            self.play_ui(|s| s.play_error());
             self.add_message("Prerequisites not met!".to_string());
         }
     }
@@ -1333,6 +1528,7 @@ impl App {
     fn try_rebirth(&mut self) {
         let level = self.state.player.level;
         if !self.state.rebirth.can_rebirth(level) {
+            self.play_ui(|s| s.play_error());
             self.add_message(format!(
                 "Need level {} to rebirth! (currently {})",
                 self.state.rebirth.min_level_for_rebirth(),
@@ -1392,8 +1588,6 @@ impl App {
         self.state.unlocked_chests = vec![ChestType::Wooden];
 
         // Reset app counters
-        self.non_rare_streak = 0;
-        self.chests_since_jackpot = 0;
         self.chests_since_xp_surge = 0;
         self.idle_income_ticks = 0;
         self.consecutive_chests = 0;
@@ -1403,6 +1597,7 @@ impl App {
         self.items_sold_count = 0;
         self.catalyst_stacks = 0.0;
         self.rare_streak_count = 0;
+        self.consecutive_crits = 0;
         self.tab_scroll = 0;
 
         // Apply rebirth bonuses
@@ -1410,7 +1605,8 @@ impl App {
         self.recalculate_player_stats();
         self.check_chest_unlocks();
 
-        // Flash + message
+        // Flash + message + sound
+        self.play_ui(|s| s.play_rebirth());
         if self.setting_show_animations {
             self.flashes.spawn(Color::Rgb(150, 100, 255), 20);
         }
@@ -1511,16 +1707,39 @@ impl App {
 
     fn try_sell_item(&mut self) {
         if !self.state.skill_tree.has_skill("transmute_basics") {
+            self.play_ui(|s| s.play_error());
             self.add_message("Learn Transmute Basics to sell items!".to_string());
             return;
         }
 
-        if self.tab_scroll >= self.state.inventory.items.len() {
+        // Build display order mapping (same as UI)
+        use crate::game::item::Rarity;
+        let rarities = [
+            Rarity::Mythic,
+            Rarity::Legendary,
+            Rarity::Epic,
+            Rarity::Rare,
+            Rarity::Uncommon,
+            Rarity::Common,
+        ];
+
+        let mut display_to_original: Vec<usize> = Vec::new();
+        for rarity in &rarities {
+            for (original_idx, item) in self.state.inventory.items.iter().enumerate() {
+                if item.rarity == *rarity {
+                    display_to_original.push(original_idx);
+                }
+            }
+        }
+
+        if self.tab_scroll >= display_to_original.len() {
             return;
         }
 
+        let original_idx = display_to_original[self.tab_scroll];
+
         // Clone item data before borrowing self mutably
-        let item = self.state.inventory.items[self.tab_scroll].clone();
+        let item = self.state.inventory.items[original_idx].clone();
 
         // Calculate sell value for one item
         let mut sell_pct = if self.state.skill_tree.has_skill("philosophers_stone") {
@@ -1552,6 +1771,7 @@ impl App {
 
         sell_gp = sell_gp.max(1);
 
+        self.play_ui(|s| s.play_sell());
         self.state.player.gp += sell_gp;
         self.state.stats.total_gp_earned += sell_gp;
         self.state.rebirth.gp_earned_this_run += sell_gp;
@@ -1570,26 +1790,29 @@ impl App {
 
         // Decrement count or remove item
         if item.count > 1 {
-            self.state.inventory.items[self.tab_scroll].count -= 1;
+            self.state.inventory.items[original_idx].count -= 1;
             self.add_message(format!("Sold 1× {} for {} GP ({} left)", item.name, sell_gp, item.count - 1));
         } else {
-            self.state.inventory.items.remove(self.tab_scroll);
+            self.state.inventory.items.remove(original_idx);
             self.add_message(format!("Sold {} for {} GP", item.name, sell_gp));
 
-            // Adjust scroll if needed
-            if self.tab_scroll > 0 && self.tab_scroll >= self.state.inventory.items.len() {
-                self.tab_scroll = self.state.inventory.items.len().saturating_sub(1);
+            // Adjust scroll if needed (using display count)
+            let new_display_count = display_to_original.len() - 1;
+            if self.tab_scroll > 0 && self.tab_scroll >= new_display_count {
+                self.tab_scroll = new_display_count.saturating_sub(1);
             }
         }
     }
 
     fn try_sell_all_items(&mut self) {
         if !self.state.skill_tree.has_skill("transmute_basics") {
+            self.play_ui(|s| s.play_error());
             self.add_message("Learn Transmute Basics to sell items!".to_string());
             return;
         }
 
         if self.state.inventory.items.is_empty() {
+            self.play_ui(|s| s.play_error());
             self.add_message("No items to sell!".to_string());
             return;
         }
@@ -1644,6 +1867,7 @@ impl App {
             self.award_xp(xp_bonus);
         }
 
+        self.play_ui(|s| s.play_sell());
         self.add_message(format!("Sold {} items for {} GP", total_sold, total_gp));
         self.state.inventory.items.clear();
         self.tab_scroll = 0;
@@ -1712,10 +1936,8 @@ impl App {
         // Skill tree stat bonuses
         let tree = &self.state.skill_tree;
         if tree.has_skill("lucky_charm") {
-            up_luck += 3.0;
-        }
-        if tree.has_skill("four_leaf") {
             up_luck += 5.0;
+            up_gp += 0.10;
         }
         if tree.has_skill("treasure_sense") {
             up_gp += 0.50;
@@ -1732,7 +1954,7 @@ impl App {
 
         // New skill stat bonuses
         if tree.has_skill("fortune_favors") {
-            up_luck += 12.0;
+            up_luck += 15.0;
         }
         if tree.has_skill("time_warp") {
             up_speed += 0.50;
@@ -1763,11 +1985,26 @@ impl App {
         3 + extra_slots + rebirth_slot + world_explorer_slot
     }
 
+    /// Play a UI sound (click, tab, menu, error, purchase, sell, rebirth).
+    fn play_ui(&mut self, f: impl FnOnce(&mut SoundManager)) {
+        if self.setting_ui_sounds {
+            if let Some(ref mut snd) = self.sound { f(snd); }
+        }
+    }
+
+    /// Play a chest sound (chest start, reveal, crit, collect, level up).
+    fn play_chest(&mut self, f: impl FnOnce(&mut SoundManager)) {
+        if self.setting_chest_sounds {
+            if let Some(ref mut snd) = self.sound { f(snd); }
+        }
+    }
+
     fn add_message(&mut self, msg: String) {
         self.message_log.push((msg, 90)); // 3 seconds
     }
 
-    pub fn save_game(&self) {
+    pub fn save_game(&mut self) {
+        self.state.volume = self.setting_volume;
         save::save_game(&self.state);
     }
 
@@ -1777,7 +2014,7 @@ impl App {
             return self.handle_dev_options_input(key);
         }
 
-        const NUM_SETTINGS: usize = 2; // Animations, Dev Options
+        const NUM_SETTINGS: usize = 5; // Volume, Animations, Chest Sounds, UI Sounds, Dev Options
 
         match key.code {
             KeyCode::Up => {
@@ -1788,11 +2025,37 @@ impl App {
                 self.settings_selected = (self.settings_selected + 1).min(NUM_SETTINGS - 1);
                 false
             }
+            KeyCode::Left => {
+                if self.settings_selected == 0 {
+                    // Decrease volume by 10%
+                    self.setting_volume = (self.setting_volume - 0.1).max(0.0);
+                    self.setting_volume = (self.setting_volume * 10.0).round() / 10.0;
+                    if let Some(ref mut snd) = self.sound { snd.set_volume(self.setting_volume); }
+                    self.state.volume = self.setting_volume;
+                    if let Some(ref mut snd) = self.sound { snd.play_click(); }
+                }
+                false
+            }
+            KeyCode::Right => {
+                if self.settings_selected == 0 {
+                    // Increase volume by 10%
+                    self.setting_volume = (self.setting_volume + 0.1).min(1.0);
+                    self.setting_volume = (self.setting_volume * 10.0).round() / 10.0;
+                    if let Some(ref mut snd) = self.sound { snd.set_volume(self.setting_volume); }
+                    self.state.volume = self.setting_volume;
+                    if let Some(ref mut snd) = self.sound { snd.play_click(); }
+                }
+                false
+            }
             KeyCode::Char('e') | KeyCode::Char('E') => {
                 match self.settings_selected {
                     0 => {
+                        // Volume is controlled with Left/Right, E does nothing
+                    }
+                    1 => {
                         // Toggle animations
                         self.setting_show_animations = !self.setting_show_animations;
+                        if let Some(ref mut snd) = self.sound { snd.play_click(); }
                         let msg = if self.setting_show_animations {
                             "Animations enabled"
                         } else {
@@ -1800,8 +2063,31 @@ impl App {
                         };
                         self.add_message(msg.to_string());
                     }
-                    1 => {
+                    2 => {
+                        // Toggle chest sounds
+                        self.setting_chest_sounds = !self.setting_chest_sounds;
+                        if let Some(ref mut snd) = self.sound { snd.play_click(); }
+                        let msg = if self.setting_chest_sounds {
+                            "Chest sounds enabled"
+                        } else {
+                            "Chest sounds disabled"
+                        };
+                        self.add_message(msg.to_string());
+                    }
+                    3 => {
+                        // Toggle UI sounds
+                        self.setting_ui_sounds = !self.setting_ui_sounds;
+                        if let Some(ref mut snd) = self.sound { snd.play_click(); }
+                        let msg = if self.setting_ui_sounds {
+                            "UI sounds enabled"
+                        } else {
+                            "UI sounds disabled"
+                        };
+                        self.add_message(msg.to_string());
+                    }
+                    4 => {
                         // Enter Dev Options
+                        if let Some(ref mut snd) = self.sound { snd.play_menu_open(); }
                         self.show_dev_options = true;
                         self.dev_option_selected = 0;
                     }
@@ -1878,8 +2164,6 @@ impl App {
         // Reset app state
         self.tab_scroll = 0;
         self.active_tab = ActiveTab::Skills;
-        self.non_rare_streak = 0;
-        self.chests_since_jackpot = 0;
         self.chests_since_xp_surge = 0;
         self.idle_income_ticks = 0;
         self.consecutive_chests = 0;
@@ -1890,6 +2174,7 @@ impl App {
         self.catalyst_stacks = 0.0;
         self.rebirth_confirm = false;
         self.rare_streak_count = 0;
+        self.consecutive_crits = 0;
         self.auto_opener_paused = false;
         self.show_chest_menu = false;
         self.show_settings = false;

@@ -54,6 +54,12 @@ pub struct GameState {
     pub current_chest_type: ChestType,
     pub stats: LifetimeStats,
     pub unlocked_chests: Vec<ChestType>,
+    #[serde(default = "default_volume")]
+    pub volume: f32,
+}
+
+fn default_volume() -> f32 {
+    0.8
 }
 
 impl Default for GameState {
@@ -69,6 +75,7 @@ impl Default for GameState {
             current_chest_type: ChestType::Wooden,
             stats: LifetimeStats::default(),
             unlocked_chests: vec![ChestType::Wooden],
+            volume: default_volume(),
         }
     }
 }

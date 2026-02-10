@@ -99,7 +99,7 @@ pub fn all_upgrades() -> Vec<UpgradeDef> {
         UpgradeDef {
             id: "swift_hands",
             name: "Swift Hands",
-            description: "+10% open speed per level",
+            description: "+10% chest speed per level",
             max_level: 10,
             base_cost: 50,
             cost_scaling: 1.5,
@@ -108,7 +108,7 @@ pub fn all_upgrades() -> Vec<UpgradeDef> {
         UpgradeDef {
             id: "nimble_fingers",
             name: "Nimble Fingers",
-            description: "+5% open speed per level",
+            description: "+5% chest speed per level",
             max_level: 20,
             base_cost: 30,
             cost_scaling: 1.3,
@@ -117,7 +117,7 @@ pub fn all_upgrades() -> Vec<UpgradeDef> {
         UpgradeDef {
             id: "overdrive",
             name: "Overdrive",
-            description: "+15% open speed per level",
+            description: "+15% chest speed per level",
             max_level: 5,
             base_cost: 500,
             cost_scaling: 2.0,
@@ -126,7 +126,7 @@ pub fn all_upgrades() -> Vec<UpgradeDef> {
         UpgradeDef {
             id: "perpetual_gear",
             name: "Perpetual Gear",
-            description: "+10% open speed per level",
+            description: "+10% chest speed per level",
             max_level: 10,
             base_cost: 300,
             cost_scaling: 1.6,
@@ -135,7 +135,7 @@ pub fn all_upgrades() -> Vec<UpgradeDef> {
         UpgradeDef {
             id: "quicksilver_touch",
             name: "Quicksilver Touch",
-            description: "+8% open speed per level",
+            description: "+8% chest speed per level",
             max_level: 15,
             base_cost: 200,
             cost_scaling: 1.5,
@@ -144,7 +144,7 @@ pub fn all_upgrades() -> Vec<UpgradeDef> {
         UpgradeDef {
             id: "haste_rune",
             name: "Haste Rune",
-            description: "+20% open speed per level",
+            description: "+20% chest speed per level",
             max_level: 3,
             base_cost: 2000,
             cost_scaling: 2.5,
@@ -153,7 +153,7 @@ pub fn all_upgrades() -> Vec<UpgradeDef> {
         UpgradeDef {
             id: "chrono_accelerator",
             name: "Chrono Accelerator",
-            description: "+12% open speed per level",
+            description: "+12% chest speed per level",
             max_level: 8,
             base_cost: 800,
             cost_scaling: 1.8,

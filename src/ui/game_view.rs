@@ -204,8 +204,16 @@ fn draw_messages(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 fn format_number(n: u64) -> String {
-    if n >= 1_000_000 {
-        format!("{:.1}M", n as f64 / 1_000_000.0)
+    if n >= 1_000_000_000_000_000_000 {
+        format!("{:.2}Qi", n as f64 / 1_000_000_000_000_000_000.0)
+    } else if n >= 1_000_000_000_000_000 {
+        format!("{:.2}Qa", n as f64 / 1_000_000_000_000_000.0)
+    } else if n >= 1_000_000_000_000 {
+        format!("{:.2}T", n as f64 / 1_000_000_000_000.0)
+    } else if n >= 1_000_000_000 {
+        format!("{:.2}B", n as f64 / 1_000_000_000.0)
+    } else if n >= 1_000_000 {
+        format!("{:.2}M", n as f64 / 1_000_000.0)
     } else if n >= 1_000 {
         format!("{:.1}K", n as f64 / 1_000.0)
     } else {

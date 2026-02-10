@@ -38,18 +38,14 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    // Split: rarity distribution bar at top, items in middle, total at bottom
+    // Split: items list + total at bottom
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // distribution bar
             Constraint::Min(1),   // item list
             Constraint::Length(2), // total + hint
         ])
         .split(area);
-
-    // Rarity distribution bar
-    draw_rarity_bar(frame, app, sections[0]);
 
     let mut lines = Vec::new();
 
@@ -120,16 +116,32 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
             let crit_marker = if item.is_crit { "\u{2605}" } else { "" };
 
             // Compact format: [marker] name [×count] [crit] | GP | XP
-            let gp_str = if item.gp_value >= 1_000_000 {
-                format!("{:.1}M", item.gp_value as f64 / 1_000_000.0)
+            let gp_str = if item.gp_value >= 1_000_000_000_000_000_000 {
+                format!("{:.2}Qi", item.gp_value as f64 / 1_000_000_000_000_000_000.0)
+            } else if item.gp_value >= 1_000_000_000_000_000 {
+                format!("{:.2}Qa", item.gp_value as f64 / 1_000_000_000_000_000.0)
+            } else if item.gp_value >= 1_000_000_000_000 {
+                format!("{:.2}T", item.gp_value as f64 / 1_000_000_000_000.0)
+            } else if item.gp_value >= 1_000_000_000 {
+                format!("{:.2}B", item.gp_value as f64 / 1_000_000_000.0)
+            } else if item.gp_value >= 1_000_000 {
+                format!("{:.2}M", item.gp_value as f64 / 1_000_000.0)
             } else if item.gp_value >= 1_000 {
                 format!("{:.1}K", item.gp_value as f64 / 1_000.0)
             } else {
                 item.gp_value.to_string()
             };
 
-            let xp_str = if item.xp_value >= 1_000_000 {
-                format!("{:.1}M", item.xp_value as f64 / 1_000_000.0)
+            let xp_str = if item.xp_value >= 1_000_000_000_000_000_000 {
+                format!("{:.2}Qi", item.xp_value as f64 / 1_000_000_000_000_000_000.0)
+            } else if item.xp_value >= 1_000_000_000_000_000 {
+                format!("{:.2}Qa", item.xp_value as f64 / 1_000_000_000_000_000.0)
+            } else if item.xp_value >= 1_000_000_000_000 {
+                format!("{:.2}T", item.xp_value as f64 / 1_000_000_000_000.0)
+            } else if item.xp_value >= 1_000_000_000 {
+                format!("{:.2}B", item.xp_value as f64 / 1_000_000_000.0)
+            } else if item.xp_value >= 1_000_000 {
+                format!("{:.2}M", item.xp_value as f64 / 1_000_000.0)
             } else if item.xp_value >= 1_000 {
                 format!("{:.1}K", item.xp_value as f64 / 1_000.0)
             } else {
@@ -175,7 +187,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     // Calculate scroll offset for smooth scrolling
-    let viewport_height = sections[1].height.saturating_sub(1);
+    let viewport_height = sections[0].height.saturating_sub(1);
     let scroll_offset = if selected_line >= viewport_height {
         selected_line.saturating_sub(viewport_height) + 1
     } else {
@@ -183,7 +195,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let paragraph = Paragraph::new(lines).scroll((scroll_offset, 0));
-    frame.render_widget(paragraph, sections[1]);
+    frame.render_widget(paragraph, sections[0]);
 
     // Total at bottom with sell hints
     let can_sell = app.state.skill_tree.has_skill("transmute_basics");
@@ -218,64 +230,6 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         ]
     };
 
-    frame.render_widget(Paragraph::new(total_lines), sections[2]);
+    frame.render_widget(Paragraph::new(total_lines), sections[1]);
 }
 
-fn draw_rarity_bar(frame: &mut Frame, app: &App, area: Rect) {
-    let inv = &app.state.inventory;
-    let total = inv.count() as f64;
-    if total == 0.0 {
-        return;
-    }
-
-    let rarities = [
-        Rarity::Common,
-        Rarity::Uncommon,
-        Rarity::Rare,
-        Rarity::Epic,
-        Rarity::Legendary,
-        Rarity::Mythic,
-    ];
-
-    let bar_width = area.width.saturating_sub(2) as f64;
-
-    // First line: colored bar
-    let mut bar_spans = Vec::new();
-    bar_spans.push(Span::raw(" "));
-    for rarity in &rarities {
-        let count = inv.items.iter().filter(|i| i.rarity == *rarity).count() as f64;
-        let width = ((count / total) * bar_width).round() as usize;
-        if width > 0 {
-            bar_spans.push(Span::styled(
-                "\u{2588}".repeat(width),
-                Style::default().fg(rarity.color()),
-            ));
-        }
-    }
-
-    // Second line: legend
-    let mut legend_spans = Vec::new();
-    legend_spans.push(Span::raw(" "));
-    for rarity in &rarities {
-        let count = inv.items.iter().filter(|i| i.rarity == *rarity).count();
-        if count > 0 {
-            let pct = (count as f64 / total * 100.0) as u32;
-            legend_spans.push(Span::styled(
-                "\u{25cf}",
-                Style::default().fg(rarity.color()),
-            ));
-            legend_spans.push(Span::styled(
-                format!("{}% ", pct),
-                Style::default().fg(Color::DarkGray),
-            ));
-        }
-    }
-
-    let lines = vec![
-        Line::from(bar_spans),
-        Line::from(""),
-        Line::from(legend_spans),
-    ];
-
-    frame.render_widget(Paragraph::new(lines), area);
-}

@@ -1,5 +1,6 @@
 mod animation;
 mod app;
+mod audio;
 mod data;
 mod event;
 mod game;

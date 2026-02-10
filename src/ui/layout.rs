@@ -28,7 +28,7 @@ pub fn draw_layout(frame: &mut Frame, app: &App) {
     tab_panel::draw(frame, app, columns[1]);
 
     // Footer with controls
-    let footer_text = " [Space] Open  [C] Chest Menu  [\u{2190}/\u{2192}] Tabs  [E] Buy/Learn/Equip  [Esc] Settings  [?] Help";
+    let footer_text = " [Space] Open  [C] Chest Menu  [\u{2190}/\u{2192}] Tabs  [E] Buy/Learn/Equip  [Esc] Settings";
     let footer = Paragraph::new(footer_text)
         .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(footer, outer[1]);
@@ -116,7 +116,7 @@ fn draw_chest_menu_overlay(frame: &mut Frame, app: &App, area: Rect) {
 
     for (i, ct) in ChestType::ALL.iter().enumerate() {
         let unlocked = app.state.unlocked_chests.contains(ct);
-        let is_current = *ct == app.state.current_chest_type;
+        let is_selected = i == app.chest_menu_selected;
         let level_req = ct.required_level();
 
         let key_name = match ct {
@@ -140,10 +140,10 @@ fn draw_chest_menu_overlay(frame: &mut Frame, app: &App, area: Rect) {
             ChestType::Void => app.state.upgrades.get_level("void_key") > 0,
         };
 
-        let marker = if is_current { "\u{25b6} " } else { "  " };
+        let marker = if is_selected { "\u{25b6} " } else { "  " };
         let number = format!("[{}] ", i + 1);
 
-        let name_style = if is_current {
+        let name_style = if is_selected {
             Style::default().fg(ct.color()).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
         } else if unlocked {
             Style::default().fg(ct.color()).add_modifier(Modifier::BOLD)
@@ -191,7 +191,7 @@ fn draw_chest_menu_overlay(frame: &mut Frame, app: &App, area: Rect) {
     }
 
     lines.push(Line::from(Span::styled(
-        "Press [C] or [Space] to close",
+        "[↑↓] Navigate  [E] Select  [1-7] Quick Select  [C/Space/Esc] Close",
         Style::default().fg(Color::DarkGray),
     )));
 
@@ -279,7 +279,7 @@ fn draw_settings_overlay(frame: &mut Frame, app: &App, area: Rect) {
 fn draw_main_settings_overlay(frame: &mut Frame, app: &App, area: Rect) {
     // Settings panel (centered and compact)
     let overlay_width = 50.min(area.width.saturating_sub(4));
-    let overlay_height = 11.min(area.height.saturating_sub(4));
+    let overlay_height = 18.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(overlay_width)) / 2;
     let y = (area.height.saturating_sub(overlay_height)) / 2;
     let overlay_area = Rect::new(x, y, overlay_width, overlay_height);
@@ -293,7 +293,35 @@ fn draw_main_settings_overlay(frame: &mut Frame, app: &App, area: Rect) {
         Line::from(""),
     ];
 
-    // Setting 0: Animations toggle
+    // Setting 0: Volume slider
+    let is_selected_0 = app.settings_selected == 0;
+    let marker_0 = if is_selected_0 { "▶ " } else { "  " };
+    let vol_pct = (app.setting_volume * 100.0).round() as u32;
+    let filled = (app.setting_volume * 10.0).round() as usize;
+    let empty = 10 - filled;
+    let bar: String = "█".repeat(filled) + &"░".repeat(empty);
+
+    let mut vol_spans = vec![
+        Span::raw("   "),
+        Span::styled(marker_0, Style::default().fg(Color::Yellow)),
+        Span::styled("Volume: ", Style::default().fg(Color::White).add_modifier(
+            if is_selected_0 { Modifier::BOLD } else { Modifier::empty() }
+        )),
+        Span::styled(
+            format!("[{}] {}%", bar, vol_pct),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ),
+    ];
+    if is_selected_0 {
+        vol_spans.push(Span::styled(
+            "  ◄ ►",
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+    settings_lines.push(Line::from(vol_spans));
+    settings_lines.push(Line::from(""));
+
+    // Setting 1: Animations toggle
     let anim_status = if app.setting_show_animations {
         "ON"
     } else {
@@ -304,14 +332,14 @@ fn draw_main_settings_overlay(frame: &mut Frame, app: &App, area: Rect) {
     } else {
         Color::Red
     };
-    let is_selected_0 = app.settings_selected == 0;
-    let marker_0 = if is_selected_0 { "▶ " } else { "  " };
+    let is_selected_1 = app.settings_selected == 1;
+    let marker_1 = if is_selected_1 { "▶ " } else { "  " };
 
     settings_lines.push(Line::from(vec![
-        Span::raw("      "),
-        Span::styled(marker_0, Style::default().fg(Color::Yellow)),
+        Span::raw("   "),
+        Span::styled(marker_1, Style::default().fg(Color::Yellow)),
         Span::styled("Animations: ", Style::default().fg(Color::White).add_modifier(
-            if is_selected_0 { Modifier::BOLD } else { Modifier::empty() }
+            if is_selected_1 { Modifier::BOLD } else { Modifier::empty() }
         )),
         Span::styled(
             anim_status,
@@ -322,16 +350,54 @@ fn draw_main_settings_overlay(frame: &mut Frame, app: &App, area: Rect) {
     ]));
     settings_lines.push(Line::from(""));
 
-    // Setting 1: Dev Options
-    let is_selected_1 = app.settings_selected == 1;
-    let marker_1 = if is_selected_1 { "▶ " } else { "  " };
+    // Setting 2: Chest Sounds toggle
+    let chest_status = if app.setting_chest_sounds { "ON" } else { "OFF" };
+    let chest_color = if app.setting_chest_sounds { Color::Green } else { Color::Red };
+    let is_selected_2 = app.settings_selected == 2;
+    let marker_2 = if is_selected_2 { "▶ " } else { "  " };
 
     settings_lines.push(Line::from(vec![
-        Span::raw("      "),
-        Span::styled(marker_1, Style::default().fg(Color::Yellow)),
+        Span::raw("   "),
+        Span::styled(marker_2, Style::default().fg(Color::Yellow)),
+        Span::styled("Chest Sounds: ", Style::default().fg(Color::White).add_modifier(
+            if is_selected_2 { Modifier::BOLD } else { Modifier::empty() }
+        )),
+        Span::styled(
+            chest_status,
+            Style::default().fg(chest_color).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    settings_lines.push(Line::from(""));
+
+    // Setting 3: UI Sounds toggle
+    let ui_status = if app.setting_ui_sounds { "ON" } else { "OFF" };
+    let ui_color = if app.setting_ui_sounds { Color::Green } else { Color::Red };
+    let is_selected_3 = app.settings_selected == 3;
+    let marker_3 = if is_selected_3 { "▶ " } else { "  " };
+
+    settings_lines.push(Line::from(vec![
+        Span::raw("   "),
+        Span::styled(marker_3, Style::default().fg(Color::Yellow)),
+        Span::styled("UI Sounds: ", Style::default().fg(Color::White).add_modifier(
+            if is_selected_3 { Modifier::BOLD } else { Modifier::empty() }
+        )),
+        Span::styled(
+            ui_status,
+            Style::default().fg(ui_color).add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    settings_lines.push(Line::from(""));
+
+    // Setting 4: Dev Options
+    let is_selected_4 = app.settings_selected == 4;
+    let marker_4 = if is_selected_4 { "▶ " } else { "  " };
+
+    settings_lines.push(Line::from(vec![
+        Span::raw("   "),
+        Span::styled(marker_4, Style::default().fg(Color::Yellow)),
         Span::styled("Dev Options", Style::default()
             .fg(Color::Magenta)
-            .add_modifier(if is_selected_1 {
+            .add_modifier(if is_selected_4 {
                 Modifier::BOLD | Modifier::UNDERLINED
             } else {
                 Modifier::empty()
@@ -340,9 +406,9 @@ fn draw_main_settings_overlay(frame: &mut Frame, app: &App, area: Rect) {
     settings_lines.push(Line::from(""));
     settings_lines.push(Line::from(""));
 
-    // Controls at bottom (inside box)
+    // Controls at bottom (inside box, centered)
     settings_lines.push(Line::from(Span::styled(
-        "[↑↓] Navigate  [E] Select  [Esc] Close",
+        " [↑↓] Navigate  [◄►] Volume  [E] Select  [Esc] Close",
         Style::default().fg(Color::DarkGray),
     )));
 
@@ -365,16 +431,6 @@ fn draw_dev_options_overlay(frame: &mut Frame, app: &App, area: Rect) {
     // Clear background
     let clear = ratatui::widgets::Clear;
     frame.render_widget(clear, overlay_area);
-
-    // Split into content and controls
-    let inner_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(1),      // Options content
-            Constraint::Length(1),   // Spacer
-            Constraint::Length(1),   // Controls
-        ])
-        .split(overlay_area);
 
     let mut lines = vec![
         Line::from(""),
@@ -410,17 +466,18 @@ fn draw_dev_options_overlay(frame: &mut Frame, app: &App, area: Rect) {
         )));
     }
 
+    lines.push(Line::from(""));
+
+    // Controls at bottom (inside box, centered)
+    lines.push(Line::from(Span::styled(
+        "  [↑↓] Navigate  [E] Select  [Esc] Close",
+        Style::default().fg(Color::DarkGray),
+    )));
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Magenta))
         .title(" Dev Options ");
     let paragraph = Paragraph::new(lines).block(block);
-    frame.render_widget(paragraph, inner_layout[0]);
-
-    // Controls at bottom (centered)
-    let controls = Paragraph::new(Line::from(Span::styled(
-        "[↑↓] Navigate  [E] Select  [Esc] Close",
-        Style::default().fg(Color::DarkGray),
-    ))).alignment(Alignment::Center);
-    frame.render_widget(controls, inner_layout[2]);
+    frame.render_widget(paragraph, overlay_area);
 }

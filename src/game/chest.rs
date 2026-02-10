@@ -50,13 +50,25 @@ impl ChestType {
 
     pub fn base_ticks(self) -> u32 {
         match self {
-            ChestType::Wooden => 60,   // ~2 seconds
-            ChestType::Iron => 90,     // ~3 seconds
-            ChestType::Silver => 120,  // ~4 seconds
-            ChestType::Gold => 150,    // ~5 seconds
-            ChestType::Crystal => 180, // ~6 seconds
-            ChestType::Shadow => 240,  // ~8 seconds
-            ChestType::Void => 300,    // ~10 seconds
+            ChestType::Wooden => 60,    // ~2 seconds
+            ChestType::Iron => 120,     // ~4 seconds
+            ChestType::Silver => 210,   // ~7 seconds
+            ChestType::Gold => 360,     // ~12 seconds
+            ChestType::Crystal => 600,  // ~20 seconds
+            ChestType::Shadow => 900,   // ~30 seconds
+            ChestType::Void => 1500,    // ~50 seconds
+        }
+    }
+
+    pub fn reward_multiplier(self) -> f64 {
+        match self {
+            ChestType::Wooden => 1.0,
+            ChestType::Iron => 1.5,
+            ChestType::Silver => 2.5,
+            ChestType::Gold => 5.0,
+            ChestType::Crystal => 10.0,
+            ChestType::Shadow => 25.0,
+            ChestType::Void => 60.0,
         }
     }
 

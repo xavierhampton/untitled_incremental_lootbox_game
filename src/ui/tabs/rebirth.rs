@@ -50,13 +50,6 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         ),
     ]));
     lines.push(Line::from(vec![
-        Span::styled("  Total Earned:   ", Style::default().fg(Color::Gray)),
-        Span::styled(
-            format!("{}", rb.total_essence_earned),
-            Style::default().fg(Color::Rgb(200, 150, 255)),
-        ),
-    ]));
-    lines.push(Line::from(vec![
         Span::styled("  Current Level:  ", Style::default().fg(Color::Gray)),
         Span::styled(
             format!("{}", player.level),
