@@ -63,12 +63,12 @@ impl ChestType {
     pub fn reward_multiplier(self) -> f64 {
         match self {
             ChestType::Wooden => 1.0,
-            ChestType::Iron => 1.5,
-            ChestType::Silver => 2.5,
-            ChestType::Gold => 5.0,
-            ChestType::Crystal => 10.0,
-            ChestType::Shadow => 25.0,
-            ChestType::Void => 60.0,
+            ChestType::Iron => 1.3,
+            ChestType::Silver => 1.8,
+            ChestType::Gold => 3.0,
+            ChestType::Crystal => 5.0,
+            ChestType::Shadow => 10.0,
+            ChestType::Void => 20.0,
         }
     }
 

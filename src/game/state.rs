@@ -56,10 +56,20 @@ pub struct GameState {
     pub unlocked_chests: Vec<ChestType>,
     #[serde(default = "default_volume")]
     pub volume: f32,
+    #[serde(default = "default_true")]
+    pub show_animations: bool,
+    #[serde(default = "default_true")]
+    pub chest_sounds: bool,
+    #[serde(default = "default_true")]
+    pub ui_sounds: bool,
 }
 
 fn default_volume() -> f32 {
     0.8
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for GameState {
@@ -76,6 +86,9 @@ impl Default for GameState {
             stats: LifetimeStats::default(),
             unlocked_chests: vec![ChestType::Wooden],
             volume: default_volume(),
+            show_animations: default_true(),
+            chest_sounds: default_true(),
+            ui_sounds: default_true(),
         }
     }
 }

@@ -172,7 +172,9 @@ impl SoundManager {
     }
 
     pub fn set_volume(&mut self, volume: f32) {
-        self.volume = volume.clamp(0.0, 1.0);
+        // Apply power curve: slider 50% → ~12.5% actual volume
+        // This makes the quiet end of the slider much more usable
+        self.volume = volume.clamp(0.0, 1.0).powf(3.0);
     }
 
     /// Returns false (and skips) if a sound was played too recently.

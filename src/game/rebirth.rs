@@ -22,10 +22,11 @@ impl RebirthState {
         current_level >= self.min_level_for_rebirth()
     }
 
-    pub fn calculate_essence_reward(&self, level: u32, gp: u64) -> u64 {
-        let base = (level as f64).powf(1.8) + (gp as f64).log10().max(0.0) * 10.0;
-        let scaling = 1.0 + self.rebirth_count as f64 * 0.1;
-        let mut essence = (base * scaling) as u64;
+    pub fn calculate_essence_reward(&self, current_gp: u64) -> u64 {
+        if current_gp == 0 {
+            return 0;
+        }
+        let mut essence = ((current_gp as f64).powf(0.35) / 3.0) as u64;
 
         // Essence Siphon rebirth skill: +20% essence
         if self.has_rebirth_skill("rb_essence_boost") {

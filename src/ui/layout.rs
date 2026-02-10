@@ -301,7 +301,7 @@ fn draw_main_settings_overlay(frame: &mut Frame, app: &App, area: Rect) {
     let empty = 10 - filled;
     let bar: String = "█".repeat(filled) + &"░".repeat(empty);
 
-    let mut vol_spans = vec![
+    let vol_spans = vec![
         Span::raw("   "),
         Span::styled(marker_0, Style::default().fg(Color::Yellow)),
         Span::styled("Volume: ", Style::default().fg(Color::White).add_modifier(
@@ -312,12 +312,6 @@ fn draw_main_settings_overlay(frame: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         ),
     ];
-    if is_selected_0 {
-        vol_spans.push(Span::styled(
-            "  ◄ ►",
-            Style::default().fg(Color::DarkGray),
-        ));
-    }
     settings_lines.push(Line::from(vol_spans));
     settings_lines.push(Line::from(""));
 
@@ -406,9 +400,8 @@ fn draw_main_settings_overlay(frame: &mut Frame, app: &App, area: Rect) {
     settings_lines.push(Line::from(""));
     settings_lines.push(Line::from(""));
 
-    // Controls at bottom (inside box, centered)
     settings_lines.push(Line::from(Span::styled(
-        " [↑↓] Navigate  [◄►] Volume  [E] Select  [Esc] Close",
+        " [↑↓] Navigate  [E] Select  [Esc] Close",
         Style::default().fg(Color::DarkGray),
     )));
 

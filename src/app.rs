@@ -128,6 +128,9 @@ impl App {
         }
 
         let saved_volume = state.volume;
+        let saved_animations = state.show_animations;
+        let saved_chest_sounds = state.chest_sounds;
+        let saved_ui_sounds = state.ui_sounds;
 
         let mut app = Self {
             state,
@@ -160,9 +163,9 @@ impl App {
             settings_selected: 0,
             show_dev_options: false,
             dev_option_selected: 0,
-            setting_show_animations: true,
-            setting_chest_sounds: true,
-            setting_ui_sounds: true,
+            setting_show_animations: saved_animations,
+            setting_chest_sounds: saved_chest_sounds,
+            setting_ui_sounds: saved_ui_sounds,
             setting_volume: saved_volume,
             sound: SoundManager::new(),
         };
@@ -365,6 +368,7 @@ impl App {
             KeyCode::Char('c') | KeyCode::Char('C') => {
                 self.show_chest_menu = !self.show_chest_menu;
                 if self.show_chest_menu {
+                    self.chest_menu_selected = self.state.current_chest_type.index();
                     self.play_ui(|s| s.play_menu_open());
                 } else {
                     self.play_ui(|s| s.play_menu_close());
@@ -1541,8 +1545,7 @@ impl App {
         if !self.rebirth_confirm {
             self.rebirth_confirm = true;
             let essence = self.state.rebirth.calculate_essence_reward(
-                level,
-                self.state.rebirth.gp_earned_this_run,
+                self.state.player.gp,
             );
             self.add_message(format!(
                 "Press [R] again to rebirth for {} Essence!",
@@ -1558,10 +1561,9 @@ impl App {
 
     fn perform_rebirth(&mut self) {
         let level = self.state.player.level;
-        let gp_this_run = self.state.rebirth.gp_earned_this_run;
 
-        // Calculate essence reward
-        let essence = self.state.rebirth.calculate_essence_reward(level, gp_this_run);
+        // Calculate essence reward based on current GP
+        let essence = self.state.rebirth.calculate_essence_reward(self.state.player.gp);
 
         // Award essence
         self.state.rebirth.essence += essence;
@@ -1586,6 +1588,7 @@ impl App {
         self.state.chest_progress = crate::game::chest::ChestProgress::default();
         self.state.current_chest_type = ChestType::Wooden;
         self.state.unlocked_chests = vec![ChestType::Wooden];
+        self.state.relics = crate::game::relic::RelicState::default();
 
         // Reset app counters
         self.chests_since_xp_surge = 0;
@@ -2005,6 +2008,9 @@ impl App {
 
     pub fn save_game(&mut self) {
         self.state.volume = self.setting_volume;
+        self.state.show_animations = self.setting_show_animations;
+        self.state.chest_sounds = self.setting_chest_sounds;
+        self.state.ui_sounds = self.setting_ui_sounds;
         save::save_game(&self.state);
     }
 

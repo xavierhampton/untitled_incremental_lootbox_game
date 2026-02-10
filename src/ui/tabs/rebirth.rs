@@ -72,11 +72,11 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     ]));
 
     // Estimated essence reward
-    let est_essence = rb.calculate_essence_reward(player.level, rb.gp_earned_this_run);
+    let est_essence = rb.calculate_essence_reward(player.gp);
     lines.push(Line::from(vec![
         Span::styled("  Est. Reward:    ", Style::default().fg(Color::Gray)),
         Span::styled(
-            format!("{} Essence", est_essence),
+            format!("{} Essence (from current GP)", est_essence),
             Style::default()
                 .fg(Color::Rgb(200, 150, 255))
                 .add_modifier(Modifier::BOLD),

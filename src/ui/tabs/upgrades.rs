@@ -57,7 +57,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         let cost = if maxed {
             "MAX".to_string()
         } else {
-            format!("{} GP", upg.cost_at_level(level))
+            format!("{} GP", format_number(upg.cost_at_level(level)))
         };
 
         let is_selected = i == tab_scroll;
