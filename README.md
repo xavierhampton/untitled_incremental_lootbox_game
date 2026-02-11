@@ -1,6 +1,6 @@
 # Untitled Incremental Lootbox Game
 
-An incremental lootbox game built with Rust and Ratatui.
+A dopamine rich incremental lootbox game built with Rust and Ratatui.
 
 ## Demo
 
@@ -30,10 +30,3 @@ cargo run --release
 **Web (experimental - may have bugs):**
 Hosted by GitHub Pages at ...
 
-## Development
-
-Dev menu available for testing. See options menu in-game.
-
-## License
-
-MIT
