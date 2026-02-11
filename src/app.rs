@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crate::input::{GameKeyCode, GameKeyEvent};
 use rand::rngs::SmallRng;
 use rand::{Rng, SeedableRng};
 
@@ -182,12 +182,12 @@ impl App {
         app
     }
 
+    pub fn set_screen_size(&mut self, w: u16, h: u16) {
+        self.screen_w = w;
+        self.screen_h = h;
+    }
+
     pub fn on_tick(&mut self) {
-        // Track terminal size for firework positioning
-        if let Ok((w, h)) = crossterm::terminal::size() {
-            self.screen_w = w;
-            self.screen_h = h;
-        }
 
         // Auto-save every ~30 seconds (900 ticks at 30/sec)
         self.auto_save_counter += 1;
@@ -287,12 +287,12 @@ impl App {
     }
 
     /// Returns true if the app should quit
-    pub fn on_key(&mut self, key: KeyEvent) -> bool {
+    pub fn on_key(&mut self, key: GameKeyEvent) -> bool {
         // Global keys
         match key.code {
-            KeyCode::Char('q') | KeyCode::Char('Q') => return true,
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => return true,
-            KeyCode::Esc => {
+            GameKeyCode::Char('q') | GameKeyCode::Char('Q') => return true,
+            GameKeyCode::Char('c') if key.ctrl => return true,
+            GameKeyCode::Esc => {
                 // Toggle settings menu
                 self.show_settings = !self.show_settings;
                 if self.show_settings {
@@ -322,7 +322,7 @@ impl App {
 
         match key.code {
             // Chest interaction / Open or collect chest
-            KeyCode::Char(' ') => {
+            GameKeyCode::Char(' ') => {
                 self.play_chest(|s| s.play_click());
                 match self.state.chest_progress.state {
                     ChestState::Idle => {
@@ -342,7 +342,7 @@ impl App {
             }
 
             // Tab switching
-            KeyCode::Tab | KeyCode::Right => {
+            GameKeyCode::Tab | GameKeyCode::Right => {
                 self.play_ui(|s| s.play_tab_switch());
                 let idx = ActiveTab::ALL
                     .iter()
@@ -352,7 +352,7 @@ impl App {
                 self.tab_scroll = 0;
                 self.rebirth_confirm = false;
             }
-            KeyCode::BackTab | KeyCode::Left => {
+            GameKeyCode::BackTab | GameKeyCode::Left => {
                 self.play_ui(|s| s.play_tab_switch());
                 let idx = ActiveTab::ALL
                     .iter()
@@ -365,7 +365,7 @@ impl App {
             }
 
             // Toggle chest menu with 'C'
-            KeyCode::Char('c') | KeyCode::Char('C') => {
+            GameKeyCode::Char('c') | GameKeyCode::Char('C') => {
                 self.show_chest_menu = !self.show_chest_menu;
                 if self.show_chest_menu {
                     self.chest_menu_selected = self.state.current_chest_type.index();
@@ -376,10 +376,10 @@ impl App {
             }
 
             // Tab-specific controls
-            KeyCode::Up => {
+            GameKeyCode::Up => {
                 self.tab_scroll = self.tab_scroll.saturating_sub(1);
             }
-            KeyCode::Down => {
+            GameKeyCode::Down => {
                 let max = match self.active_tab {
                     ActiveTab::Skills => all_skills().len().saturating_sub(1),
                     ActiveTab::Upgrades => all_upgrades().len().saturating_sub(1),
@@ -394,7 +394,7 @@ impl App {
             }
 
             // Buy upgrade / Learn skill / Equip relic (E key)
-            KeyCode::Char('e') | KeyCode::Char('E') => {
+            GameKeyCode::Char('e') | GameKeyCode::Char('E') => {
                 if self.active_tab == ActiveTab::Upgrades {
                     self.try_buy_upgrade();
                 } else if self.active_tab == ActiveTab::Skills {
@@ -407,28 +407,28 @@ impl App {
             }
 
             // Unequip all relics
-            KeyCode::Char('u') | KeyCode::Char('U') => {
+            GameKeyCode::Char('u') | GameKeyCode::Char('U') => {
                 if self.active_tab == ActiveTab::Relics {
                     self.unequip_all_relics();
                 }
             }
 
             // Rebirth
-            KeyCode::Char('r') | KeyCode::Char('R') => {
+            GameKeyCode::Char('r') | GameKeyCode::Char('R') => {
                 if self.active_tab == ActiveTab::Rebirth {
                     self.try_rebirth();
                 }
             }
 
             // Sell item (Alchemy)
-            KeyCode::Char('s') | KeyCode::Char('S') => {
+            GameKeyCode::Char('s') | GameKeyCode::Char('S') => {
                 if self.active_tab == ActiveTab::Inventory {
                     self.try_sell_item();
                 }
             }
 
             // Sell all items (Alchemy)
-            KeyCode::Char('a') | KeyCode::Char('A') => {
+            GameKeyCode::Char('a') | GameKeyCode::Char('A') => {
                 if self.active_tab == ActiveTab::Inventory {
                     self.try_sell_all_items();
                 }
@@ -440,24 +440,24 @@ impl App {
         false
     }
 
-    fn handle_chest_menu_input(&mut self, key: KeyEvent) -> bool {
+    fn handle_chest_menu_input(&mut self, key: GameKeyEvent) -> bool {
         use crate::game::chest::ChestType;
 
         match key.code {
             // Close chest menu with Space, C, or Esc
-            KeyCode::Char(' ') | KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Esc => {
+            GameKeyCode::Char(' ') | GameKeyCode::Char('c') | GameKeyCode::Char('C') | GameKeyCode::Esc => {
                 self.show_chest_menu = false;
                 self.play_ui(|s| s.play_menu_close());
             }
             // Arrow key navigation
-            KeyCode::Up => {
+            GameKeyCode::Up => {
                 self.chest_menu_selected = self.chest_menu_selected.saturating_sub(1);
             }
-            KeyCode::Down => {
+            GameKeyCode::Down => {
                 self.chest_menu_selected = (self.chest_menu_selected + 1).min(ChestType::ALL.len() - 1);
             }
             // Select chest with E or Enter
-            KeyCode::Char('e') | KeyCode::Char('E') | KeyCode::Enter => {
+            GameKeyCode::Char('e') | GameKeyCode::Char('E') | GameKeyCode::Enter => {
                 let ct = ChestType::ALL[self.chest_menu_selected];
                 if self.state.unlocked_chests.contains(&ct) {
                     self.play_ui(|s| s.play_click());
@@ -471,7 +471,7 @@ impl App {
                 }
             }
             // Select chest with number keys 1-7
-            KeyCode::Char(c @ '1'..='7') => {
+            GameKeyCode::Char(c @ '1'..='7') => {
                 let idx = (c as usize) - ('1' as usize);
                 if idx < ChestType::ALL.len() {
                     let ct = ChestType::ALL[idx];
@@ -2014,7 +2014,7 @@ impl App {
         save::save_game(&self.state);
     }
 
-    fn handle_settings_input(&mut self, key: KeyEvent) -> bool {
+    fn handle_settings_input(&mut self, key: GameKeyEvent) -> bool {
         // If in dev options submenu, handle separately
         if self.show_dev_options {
             return self.handle_dev_options_input(key);
@@ -2023,15 +2023,15 @@ impl App {
         const NUM_SETTINGS: usize = 5; // Volume, Animations, Chest Sounds, UI Sounds, Dev Options
 
         match key.code {
-            KeyCode::Up => {
+            GameKeyCode::Up => {
                 self.settings_selected = self.settings_selected.saturating_sub(1);
                 false
             }
-            KeyCode::Down => {
+            GameKeyCode::Down => {
                 self.settings_selected = (self.settings_selected + 1).min(NUM_SETTINGS - 1);
                 false
             }
-            KeyCode::Left => {
+            GameKeyCode::Left => {
                 if self.settings_selected == 0 {
                     // Decrease volume by 10%
                     self.setting_volume = (self.setting_volume - 0.1).max(0.0);
@@ -2042,7 +2042,7 @@ impl App {
                 }
                 false
             }
-            KeyCode::Right => {
+            GameKeyCode::Right => {
                 if self.settings_selected == 0 {
                     // Increase volume by 10%
                     self.setting_volume = (self.setting_volume + 0.1).min(1.0);
@@ -2053,7 +2053,7 @@ impl App {
                 }
                 false
             }
-            KeyCode::Char('e') | KeyCode::Char('E') => {
+            GameKeyCode::Char('e') | GameKeyCode::Char('E') => {
                 match self.settings_selected {
                     0 => {
                         // Volume is controlled with Left/Right, E does nothing
@@ -2105,25 +2105,25 @@ impl App {
         }
     }
 
-    fn handle_dev_options_input(&mut self, key: KeyEvent) -> bool {
+    fn handle_dev_options_input(&mut self, key: GameKeyEvent) -> bool {
         const NUM_DEV_OPTIONS: usize = 4; // Reset, Unlock Chests, Max Money, Max Skills, Max Essence
 
         match key.code {
-            KeyCode::Esc => {
+            GameKeyCode::Esc => {
                 // Go back to main settings
                 self.show_dev_options = false;
                 self.settings_selected = 0;
                 false
             }
-            KeyCode::Up => {
+            GameKeyCode::Up => {
                 self.dev_option_selected = self.dev_option_selected.saturating_sub(1);
                 false
             }
-            KeyCode::Down => {
+            GameKeyCode::Down => {
                 self.dev_option_selected = (self.dev_option_selected + 1).min(NUM_DEV_OPTIONS);
                 false
             }
-            KeyCode::Char('e') | KeyCode::Char('E') => {
+            GameKeyCode::Char('e') | GameKeyCode::Char('E') => {
                 match self.dev_option_selected {
                     0 => {
                         // Reset game
