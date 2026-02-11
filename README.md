@@ -26,7 +26,3 @@ cargo build --release
 ```bash
 cargo run --release
 ```
-
-**Web (experimental - may have bugs):**
-Hosted by GitHub Pages at ...
-
